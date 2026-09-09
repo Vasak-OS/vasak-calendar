@@ -3,6 +3,9 @@
 //! Lo que hay acá no es decoración: cada pieza resuelve algo que en las
 //! aplicaciones reales del escritorio se rompió al menos una vez.
 
+mod caldav;
+mod comandos;
+mod cuentas;
 mod locales;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,6 +31,10 @@ pub fn run() {
         .plugin(tauri_plugin_config_manager::init())
         .plugin(tauri_plugin_vicons::init())
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            comandos::listar_cuentas,
+            comandos::eventos_de_la_cuenta,
+        ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación");
 }

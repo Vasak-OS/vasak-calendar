@@ -1,11 +1,27 @@
 _version: 1
 app:
-  nombre: Vasak Application
+  nombre: Calendar
 ventana:
   minimizar: Minimise
   maximizar: Maximise
   cerrar: Close
-inicio:
-  titulo: Hello, VasakOS
-  descripcion: This is the template. Replace this screen with your own.
-  saludo: "Hello, {0}"
+calendario:
+  hoy: Today
+  mesAnterior: Previous month
+  mesSiguiente: Next month
+  cargando: Looking for events…
+  actualizar: Refresh
+  eventosDelDia: "{0}: {1}"
+  todoElDia: All day
+  sinTitulo: (untitled)
+  seRepite: Repeats
+  seRepiteDetalle: For now it only shows on the day it starts.
+  masEventosOne: "+{0} more event"
+  masEventosOther: "+{0} more events"
+cuentas:
+  titulo: Accounts
+  calendarios: Calendars
+  sinCuentasTitulo: No calendars yet
+  sinCuentasDescripcion: Connect an account from Settings and its calendars will show up here.
+  necesitaReconectarse: It needs to be connected again from Settings
+  noSePudoLeerTodo: Some things could not be read

@@ -9,13 +9,31 @@ _version: 1
 #  2. Los dos idiomas tienen que tener las **mismas claves** y los mismos
 #     marcadores `{0}`. Hay un test que lo verifica.
 app:
-  nombre: Aplicación Vasak
+  nombre: Calendario
 ventana:
   minimizar: Minimizar
   maximizar: Maximizar
   cerrar: Cerrar
-inicio:
-  titulo: Hola, VasakOS
-  descripcion: Esta es la plantilla. Reemplazá esta pantalla por la tuya.
+calendario:
+  hoy: Hoy
+  mesAnterior: Mes anterior
+  mesSiguiente: Mes siguiente
+  cargando: Buscando eventos…
+  actualizar: Actualizar
   # `t()` no interpola: el marcador se reemplaza a mano. Ver el README.
-  saludo: "Hola, {0}"
+  eventosDelDia: "{0}: {1}"
+  todoElDia: Todo el día
+  sinTitulo: (sin título)
+  seRepite: Se repite
+  # Decirlo es parte de la función: un evento semanal que se ve una sola vez,
+  # sin avisar, hace creer que las demás semanas están libres.
+  seRepiteDetalle: Por ahora se muestra sólo el día que empieza.
+  masEventosOne: "+{0} evento más"
+  masEventosOther: "+{0} eventos más"
+cuentas:
+  titulo: Cuentas
+  calendarios: Calendarios
+  sinCuentasTitulo: Todavía no hay ningún calendario
+  sinCuentasDescripcion: Conectá una cuenta desde Configuración y sus calendarios aparecen acá.
+  necesitaReconectarse: Hay que volver a conectarla desde Configuración
+  noSePudoLeerTodo: No se pudo leer todo

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted, onUnmounted, type Ref, ref } from 'vue';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
+import CalendarioView from '@/views/CalendarioView.vue';
 
 let unListenConfig: Ref<UnlistenFn | null> = ref(null);
 
@@ -29,5 +30,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <WindowAppLayout />
+  <WindowAppLayout>
+    <CalendarioView />
+  </WindowAppLayout>
 </template>
