@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vapp",
+  "productName": "vasak-calendar",
   "version": "0.1.0",
-  "identifier": "ar.net.vasak.vapp",
+  "identifier": "ar.net.vasak.vasak-calendar",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "vapp",
+        "title": "vasak-calendar",
         "width": 800,
         "height": 600,
         "decorations": false,
@@ -32,6 +32,7 @@
         "files": {}
       },
       "deb": {
+        "desktopTemplate": "./vasak-calendar.desktop.hbs",
         "depends": [
           "libcairo2",
           "desktop-file-utils",
