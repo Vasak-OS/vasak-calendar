@@ -60,7 +60,7 @@ export function useCalendario() {
 	let vigente = 0;
 
 	const dias = computed(() => cuadricula(mes.value));
-	const eventosPorDia = computed(() => porDia(eventos.value));
+	const eventosPorDia = computed(() => porDia(eventos.value, dias.value));
 
 	/** Los eventos de un día de la cuadrícula. */
 	function eventosDe(fecha: Date): Evento[] {

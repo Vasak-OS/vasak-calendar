@@ -134,17 +134,28 @@ export function rangoDe(dias: Dia[]): { desde: string; hasta: string } {
 }
 
 /**
- * Reparte los eventos por día.
+ * Reparte los eventos por día, dentro de la cuadrícula que se está mirando.
  *
  * Un evento de varios días aparece en **cada** día que ocupa: una conferencia de
  * martes a jueves que sólo se viera el martes haría creer que el miércoles está
  * libre.
  *
+ * `dias` no es sólo para saber qué mostrar: **acota el recorrido**. Un evento que
+ * el servidor manda con fechas absurdas —un `DTEND` en el año 9999, que en un
+ * calendario ajeno es cuestión de tiempo— daría millones de vueltas, cada una con
+ * su `Date` y su cadena, y la ventana quedaría congelada varios segundos sin que
+ * nada explique por qué. Recortado a la cuadrícula, ningún evento da más de 42.
+ *
  * La clave del mapa es la fecha local en `AAAA-MM-DD`, y no el `Date`, porque
  * dos `Date` del mismo día no son la misma clave.
  */
-export function porDia(eventos: Evento[]): Map<string, Evento[]> {
+export function porDia(eventos: Evento[], dias: Dia[]): Map<string, Evento[]> {
 	const mapa = new Map<string, Evento[]>();
+	if (dias.length === 0) {
+		return mapa;
+	}
+	const primero = medianoche(dias[0].fecha);
+	const postrero = medianoche(dias[dias.length - 1].fecha);
 
 	for (const evento of eventos) {
 		const inicio = new Date(evento.inicio);
@@ -167,7 +178,13 @@ export function porDia(eventos: Evento[]): Map<string, Evento[]> {
 			}
 		}
 
-		for (let dia = medianoche(inicio); dia <= ultimo; dia = sumarDias(dia, 1)) {
+		// Recortado a lo que se ve. Lo de afuera no tiene celda donde ir.
+		const desde = medianoche(inicio) < primero ? primero : medianoche(inicio);
+		if (ultimo > postrero) {
+			ultimo = postrero;
+		}
+
+		for (let dia = desde; dia <= ultimo; dia = sumarDias(dia, 1)) {
 			const clave = claveDe(dia);
 			const delDia = mapa.get(clave);
 			if (delDia) {

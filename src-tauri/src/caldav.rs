@@ -179,8 +179,15 @@ pub fn fecha_de(valor: &str, parametros: &[String]) -> Option<(DateTime<Utc>, bo
 /// si fueran eventos llenaría el mes de cosas que no lo son.
 pub fn eventos_de(ical: &str) -> Vec<Evento> {
     let mut eventos = Vec::new();
-    let mut dentro = false;
     let mut actual: Option<EventoCrudo> = None;
+    // Cuántos componentes hay abiertos **dentro** del evento.
+    //
+    // Un `VEVENT` puede contener otro componente, y el que aparece siempre es
+    // `VALARM` —el recordatorio—, que tiene su propio `SUMMARY`: «Recordatorio»,
+    // o el texto que le puso el cliente que lo creó. Sin contar la anidación,
+    // esa línea pisaba el título del evento, y en la cuadrícula el mes entero
+    // aparecía lleno de recordatorios en vez de reuniones.
+    let mut anidado = 0usize;
 
     for linea in unir_lineas(ical) {
         let Some((nombre, parametros, valor)) = partir_linea(&linea) else {
@@ -189,23 +196,33 @@ pub fn eventos_de(ical: &str) -> Vec<Evento> {
 
         match (nombre.as_str(), valor.trim()) {
             ("BEGIN", "VEVENT") => {
-                dentro = true;
                 actual = Some(EventoCrudo::default());
+                anidado = 0;
                 continue;
             }
             ("END", "VEVENT") => {
-                dentro = false;
                 if let Some(crudo) = actual.take() {
                     if let Some(evento) = crudo.terminar() {
                         eventos.push(evento);
                     }
                 }
+                anidado = 0;
+                continue;
+            }
+            // Cualquier otro componente abierto acá adentro es de otro: se
+            // cuenta para saltearlo entero, sin mirar qué trae.
+            ("BEGIN", _) if actual.is_some() => {
+                anidado += 1;
+                continue;
+            }
+            ("END", _) if actual.is_some() => {
+                anidado = anidado.saturating_sub(1);
                 continue;
             }
             _ => {}
         }
 
-        if !dentro {
+        if anidado > 0 {
             continue;
         }
         let Some(crudo) = actual.as_mut() else { continue };
@@ -368,7 +385,7 @@ fn cliente() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("no se pudo crear el cliente HTTP: {e}"))
 }
 
-async fn cuerpo_con_tope(respuesta: reqwest::Response) -> Result<String, String> {
+async fn cuerpo_con_tope(mut respuesta: reqwest::Response) -> Result<String, String> {
     let estado = respuesta.status();
     if estado == reqwest::StatusCode::UNAUTHORIZED {
         return Err("el servidor rechazó el usuario o la contraseña. \
@@ -379,17 +396,29 @@ async fn cuerpo_con_tope(respuesta: reqwest::Response) -> Result<String, String>
         return Err(format!("el servidor respondió {estado}"));
     }
 
-    let bytes = respuesta
-        .bytes()
+    // Por trozos y cortando en el momento, no `bytes()` y después medir.
+    //
+    // `bytes()` lee la respuesta **entera** antes de devolverla, así que medirla
+    // después es enterarse del problema cuando ya pasó: un servidor que manda
+    // gigabytes hace crecer la memoria de la ventana hasta donde quiera y el
+    // aviso llega —si llega— cuando el equipo ya está pidiendo memoria al
+    // sistema. Así se deja de leer en el trozo que cruza el tope, y lo que sigue
+    // ni se pide.
+    let mut cuerpo = Vec::new();
+    while let Some(trozo) = respuesta
+        .chunk()
         .await
-        .map_err(|e| format!("no se pudo leer la respuesta: {e}"))?;
-    if bytes.len() > MAX_CUERPO {
-        return Err(format!(
-            "el servidor devolvió {} bytes, más de los {MAX_CUERPO} que se leen",
-            bytes.len()
-        ));
+        .map_err(|e| format!("no se pudo leer la respuesta: {e}"))?
+    {
+        if cuerpo.len() + trozo.len() > MAX_CUERPO {
+            return Err(format!(
+                "el servidor mandó más de {MAX_CUERPO} bytes, que es lo que se lee de una vez"
+            ));
+        }
+        cuerpo.extend_from_slice(&trozo);
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+
+    Ok(String::from_utf8_lossy(&cuerpo).into_owned())
 }
 
 /// Los calendarios que hay en la carpeta de la persona.
@@ -573,6 +602,43 @@ mod tests {
         let eventos = eventos_de(ical);
         assert_eq!(eventos.len(), 1);
         assert_eq!(eventos[0].uid, "e");
+    }
+
+    /// El recordatorio de un evento no es el título del evento.
+    ///
+    /// Un `VEVENT` casi siempre trae un `VALARM` adentro, y el `VALARM` tiene su
+    /// propio `SUMMARY` —«Recordatorio», o lo que le haya puesto el cliente que
+    /// creó el evento—. Sin contar la anidación, esa línea pisaba el título y la
+    /// cuadrícula del mes aparecía llena de «Recordatorio» en vez de reuniones.
+    #[test]
+    fn el_summary_de_un_recordatorio_no_pisa_el_del_evento() {
+        let ical = "BEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Reunión con Ana\r\n\
+            DTSTART:20260915T140000Z\r\n\
+            BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\n\
+            SUMMARY:Recordatorio\r\nDESCRIPTION:Falta un rato\r\nEND:VALARM\r\n\
+            END:VEVENT\r\n";
+
+        let eventos = eventos_de(ical);
+        assert_eq!(eventos.len(), 1);
+        assert_eq!(eventos[0].titulo, "Reunión con Ana");
+    }
+
+    /// Y un `DTSTART` de adentro tampoco corre el evento de día.
+    ///
+    /// Un `VALARM` con disparador absoluto lleva su propia fecha, que es la del
+    /// aviso y no la de la reunión.
+    #[test]
+    fn la_fecha_de_un_recordatorio_no_mueve_el_evento() {
+        let ical = "BEGIN:VEVENT\r\nUID:a\r\nDTSTART:20260915T140000Z\r\n\
+            BEGIN:VALARM\r\nACTION:DISPLAY\r\nDTSTART:20260101T000000Z\r\n\
+            RRULE:FREQ=DAILY\r\nEND:VALARM\r\n\
+            END:VEVENT\r\n";
+
+        let evento = &eventos_de(ical)[0];
+        assert_eq!(evento.inicio, "2026-09-15T14:00:00+00:00");
+        // Y el `RRULE` del aviso tampoco lo marca como repetido: el que se
+        // repite es el recordatorio, no la reunión.
+        assert!(!evento.se_repite);
     }
 
     /// Sin comienzo no hay dónde ponerlo en el mes. El estándar lo exige, pero
