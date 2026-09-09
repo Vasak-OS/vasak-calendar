@@ -90,9 +90,12 @@ function resumenSobrantes(cantidad: number): string {
 
 <template>
   <!-- Una cuadrícula de verdad y no un montón de divs: con `grid`, `row` y
-       `gridcell` un lector de pantalla anuncia en qué día está y se puede
-       recorrer con las flechas. Sin eso, un mes es una lista plana de 42 cosas
-       sin relación entre sí. -->
+       `gridcell`, un lector de pantalla dice «martes 15 de septiembre, columna
+       2» en vez de leer 42 cosas sueltas sin relación entre sí.
+
+       Lo que **todavía no** hace es moverse con las flechas: eso pide un
+       `tabindex` móvil y sus manejadores de teclado, y no está escrito. Se
+       recorre con Tab como cualquier otra cosa. -->
   <div class="flex min-h-0 flex-1 flex-col" role="grid" :aria-label="t('app.nombre')">
     <div class="grid grid-cols-7 border-ui-border border-b" role="row">
       <!-- Abreviado a la vista y entero para quien escucha: «lun» leído en voz
@@ -107,7 +110,11 @@ function resumenSobrantes(cantidad: number): string {
       </div>
     </div>
 
-    <div class="grid min-h-0 flex-1 grid-rows-6">
+    <!-- `rowgroup` y no un div pelado: una `grid` tiene que ser dueña de sus
+         filas, y un elemento sin rol en el medio las desprende del árbol de
+         accesibilidad. Las filas quedaban ahí pero la cuadrícula no las
+         reconocía como suyas. -->
+    <div class="grid min-h-0 flex-1 grid-rows-6" role="rowgroup">
       <div
         v-for="(semana, indice) in semanas"
         :key="indice"
