@@ -39,6 +39,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 roxmltree = "0.21"
 base64 = "0.22"
 chrono = "0.4"
+# La base de datos de zonas horarias de IANA, compilada adentro del binario.
+# Ver la cabecera de `zonas.rs`: sin esto un evento con `TZID` se mostraba a
+# la hora equivocada. No agrega ninguna biblioteca compartida al paquete.
+chrono-tz = "0.10"
 
 [dev-dependencies]
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en
