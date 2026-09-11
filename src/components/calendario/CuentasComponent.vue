@@ -19,11 +19,13 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <aside class="flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-ui-border border-r p-3">
-    <!-- Lo de arriba es lo que hay; el selector de zona va abajo de todo, con un
-         `flex-1` empujándolo: es una preferencia y no contenido, y arriba
-         competiría con las cuentas y los calendarios, que es lo que se viene a
-         mirar. -->
+  <!-- **El panel no desplaza; desplaza lo de adentro.** Con `overflow-y-auto`
+       acá, el menú del selector de zona quedaba recortado por el borde del
+       panel: un menú que se abre y se ve por la mitad. Además el selector queda
+       clavado abajo en vez de irse con el desplazamiento, que es donde se lo
+       busca. -->
+  <aside class="flex w-56 shrink-0 flex-col gap-4 border-ui-border border-r p-3">
+    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     <!-- Sin ninguna cuenta, lo que hace falta es decir **qué hacer**. Una lista
          vacía sin explicación se lee como una aplicación rota. -->
     <div v-if="cuentas.length === 0" class="flex flex-col gap-1">
@@ -75,9 +77,8 @@ const { t } = useI18n();
       <ul class="flex flex-col gap-1">
         <li v-for="aviso in avisos" :key="aviso" class="text-tx-muted text-xs">{{ aviso }}</li>
       </ul>
-    </section>
-
-    <div class="flex-1"></div>
+      </section>
+    </div>
 
     <ZonaComponent
       :elegida="zonaElegida"

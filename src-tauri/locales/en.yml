@@ -20,6 +20,8 @@ calendario:
   zonaEtiqueta: "Calendar time zone"
   zonaAyuda: "Which clock the events are shown in"
   zonaDelSistema: "System"
+  zonaBuscar: "Search a zone…"
+  zonaSinResultados: "No zone matches"
   viendoEn: "Showing {0} time"
   masEventosOne: "+{0} more event"
   masEventosOther: "+{0} more events"

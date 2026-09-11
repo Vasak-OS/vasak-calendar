@@ -61,6 +61,29 @@ onMounted(cargar);
            del escritorio. -->
       <img :src="icono" class="h-6 w-6 shrink-0" :alt="t('app.nombre')" />
 
+      <!-- Lo que sigue se va contra los controles de la ventana, que es donde
+           está el botón de actualizar en el resto de las aplicaciones. -->
+      <span class="flex-1"></span>
+
+      <!-- El estado de carga se dice, no se insinúa con un icono girando: sin
+           esto, un servidor lento y un mes vacío se ven igual. -->
+      <span v-if="cargando" class="text-tx-muted text-xs" role="status">
+        {{ t('calendario.cargando') }}
+      </span>
+      <button
+        type="button"
+        class="rounded-corner border border-ui-border bg-ui-bg/80 p-1 hover:bg-ui-surface disabled:opacity-50"
+        :aria-label="t('calendario.actualizar')"
+        :title="t('calendario.actualizar')"
+        :disabled="cargando"
+        @click="cargar()">
+        <img :src="actualizar" class="h-6 w-6" alt="" />
+      </button>
+    </template>
+
+    <!-- Centrado en la barra entera, no en lo que sobra entre el icono y los
+         controles de la ventana. -->
+    <template #barraCentro>
       <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
            ir atrás a la izquierda de lo que se está mirando y la de ir adelante
            a la derecha. -->
@@ -97,25 +120,6 @@ onMounted(cargar);
         class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
         @click="irAHoy()">
         {{ t('calendario.hoy') }}
-      </button>
-
-      <!-- Lo que sigue se va contra los controles de la ventana, que es donde
-           está el botón de actualizar en el resto de las aplicaciones. -->
-      <span class="flex-1"></span>
-
-      <!-- El estado de carga se dice, no se insinúa con un icono girando: sin
-           esto, un servidor lento y un mes vacío se ven igual. -->
-      <span v-if="cargando" class="text-tx-muted text-xs" role="status">
-        {{ t('calendario.cargando') }}
-      </span>
-      <button
-        type="button"
-        class="rounded-corner border border-ui-border bg-ui-bg/80 p-1 hover:bg-ui-surface disabled:opacity-50"
-        :aria-label="t('calendario.actualizar')"
-        :title="t('calendario.actualizar')"
-        :disabled="cargando"
-        @click="cargar()">
-        <img :src="actualizar" class="h-6 w-6" alt="" />
       </button>
     </template>
 

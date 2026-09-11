@@ -32,6 +32,8 @@ calendario:
   zonaEtiqueta: "Zona horaria de la agenda"
   zonaAyuda: "En qué hora se muestran los eventos"
   zonaDelSistema: "La del sistema"
+  zonaBuscar: "Buscar una zona…"
+  zonaSinResultados: "Ninguna zona coincide"
   viendoEn: "Viendo la hora de {0}"
   masEventosOne: "+{0} evento más"
   masEventosOther: "+{0} eventos más"

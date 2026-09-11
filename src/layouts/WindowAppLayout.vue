@@ -9,6 +9,9 @@ import TopBarComponent from '@/components/topbar/TopBarComponent.vue';
          con los controles de la ventana y nada más, que es como estaba. -->
     <TopBarComponent>
       <slot name="barra" />
+      <template v-if="$slots.barraCentro" #centro>
+        <slot name="barraCentro" />
+      </template>
     </TopBarComponent>
     <!-- El `slot` es lo que hace usable este layout.
          Sin él, `<WindowAppLayout>…</WindowAppLayout>` descartaba en silencio todo
