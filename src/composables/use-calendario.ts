@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { cuadricula, type Evento, porDia, primeroDelMes, rangoDe, sumarMeses } from '@/tools/mes';
 import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
@@ -6,19 +7,16 @@ import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/
 /** Dónde se recuerda en qué zona se quiere ver la agenda. */
 const CLAVE_DE_ZONA = 'vasak-calendar.zona';
 
+/** El aviso del programa de que la máquina cambió de huso. Ver `reloj.rs`. */
+const EVENTO_DE_ZONA = 'zona-cambio';
+
 /**
- * Cada cuánto se mira si cambió algo de afuera.
+ * Cada cuánto se mira si pasó la medianoche.
  *
- * Un minuto, y hay dos cosas que mirar:
+ * El día marcado como «hoy» se calculaba una sola vez, al abrir, así que una
+ * ventana abierta toda la noche amanecía con el círculo en el día de ayer.
  *
- *  1. **Que pasó la medianoche.** El día marcado como «hoy» se calculaba una
- *     sola vez, al abrir, así que una ventana abierta toda la noche amanecía con
- *     el círculo en el día de ayer.
- *  2. **Que cambió la zona del sistema.** Pasa al viajar con el reloj
- *     automático, y no hay ningún evento del navegador que lo anuncie: la única
- *     forma de enterarse es volver a preguntar.
- *
- * Un minuto no le cuesta nada a nadie —son dos comparaciones— y es lo bastante
+ * Un minuto no le cuesta nada a nadie —es una comparación— y es lo bastante
  * seguido como para que el cambio de día no se note tarde.
  */
 const LATIDO = 60_000;
@@ -62,12 +60,34 @@ interface LecturaDeCuenta {
  */
 export function useCalendario() {
 	/**
-	 * La zona del sistema, revisada cada tanto.
+	 * En qué zona horaria está la máquina.
 	 *
-	 * Es un `ref` y no una constante porque cambia: quien viaja con el reloj
-	 * automático se despierta en otra zona, y la agenda tiene que rehacerse.
+	 * **La dice el programa, no el navegador.** Arranca con lo que contesta el
+	 * motor —que para el primer dibujo es correcto y está ahí en el acto, sin
+	 * esperar a nadie— y en cuanto contesta el programa se reemplaza por lo que
+	 * dice el sistema.
+	 *
+	 * La diferencia no es de precisión sino de que el motor **no se entera de que
+	 * cambió**: se queda con la zona que leyó al arrancar y contesta siempre lo
+	 * mismo, así que una ventana abierta mientras el sistema cambia de huso —al
+	 * viajar, con el reloj automático— seguiría mostrando la agenda con la hora
+	 * del país anterior. El programa escucha el aviso del sistema y lo pasa.
 	 */
 	const zonaDelSistema = ref(zonaDeLaSesion());
+
+	/** Le pregunta al programa, que le pregunta al sistema. */
+	async function preguntarLaZona() {
+		try {
+			const delSistema = await invoke<string>('zona_del_sistema');
+			if (esZonaConocida(delSistema)) {
+				zonaDelSistema.value = delSistema;
+			}
+		} catch (e) {
+			// No es un fallo que valga la pena mostrar: lo que contestó el motor
+			// sirve, y lo único que se pierde es enterarse de un cambio de huso.
+			console.error('no se pudo leer la zona horaria del sistema', e);
+		}
+	}
 
 	/**
 	 * En qué zona se quiere ver la agenda, o vacío para seguir a la del sistema.
@@ -208,6 +228,31 @@ export function useCalendario() {
 		await cargar();
 	});
 
+	// La zona de verdad, y el aviso de cuando cambie.
+	preguntarLaZona();
+	let dejarDeEscuchar: UnlistenFn | null = null;
+	let descartado = false;
+	listen<string>(EVENTO_DE_ZONA, (aviso) => {
+		if (esZonaConocida(aviso.payload)) {
+			zonaDelSistema.value = aviso.payload;
+		}
+	})
+		.then((cancelar) => {
+			// La ventana se puede cerrar antes de que esto termine de engancharse, y
+			// entonces no habría quién cancele: el oyente quedaría vivo apuntando a
+			// una vista que ya no existe.
+			if (descartado) {
+				cancelar();
+				return;
+			}
+			dejarDeEscuchar = cancelar;
+		})
+		.catch((e) => {
+			// Sin el aviso, la zona igual se vuelve a leer cada vez que se vuelve a
+			// la ventana. Se pierde enterarse en el momento, no enterarse.
+			console.error('no se pudo escuchar el cambio de zona horaria', e);
+		});
+
 	const latido = setInterval(() => {
 		const ahora = new Date();
 		// Sólo si cambió el día, y **el día de la zona que se está mirando**:
@@ -218,23 +263,22 @@ export function useCalendario() {
 		if (!mismoDiaCivil(civilDe(ahora, zona.value), civilDe(hoy.value, zona.value))) {
 			hoy.value = ahora;
 		}
-		const delSistema = zonaDeLaSesion();
-		if (delSistema !== zonaDelSistema.value) {
-			zonaDelSistema.value = delSistema;
-		}
 	}, LATIDO);
 
-	// Al volver a la ventana, sin esperar al latido: quien vuelve después de
-	// suspender el equipo en otro país tiene que ver la agenda bien de entrada.
+	// Al volver a la ventana, sin esperar a nada: quien vuelve después de
+	// suspender el equipo en otro país tiene que ver la agenda bien de entrada, y
+	// un aviso del bus puede haberse perdido mientras el equipo dormía.
 	const alVolver = () => {
 		hoy.value = new Date();
-		zonaDelSistema.value = zonaDeLaSesion();
+		preguntarLaZona();
 	};
 	window.addEventListener('focus', alVolver);
 
 	onScopeDispose(() => {
+		descartado = true;
 		clearInterval(latido);
 		window.removeEventListener('focus', alVolver);
+		dejarDeEscuchar?.();
 	});
 
 	return {

@@ -7,6 +7,7 @@ mod caldav;
 mod comandos;
 mod cuentas;
 mod locales;
+mod reloj;
 mod zonas;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,7 +36,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             comandos::listar_cuentas,
             comandos::eventos_de_la_cuenta,
+            reloj::zona_del_sistema,
         ])
+        // El aviso de que la máquina cambió de huso. Va acá y no en la ventana
+        // porque el motor de JavaScript se queda con la zona que leyó al
+        // arrancar: ver la cabecera de `reloj.rs`.
+        .setup(|app| {
+            reloj::escuchar(app.handle().clone());
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación");
 }
