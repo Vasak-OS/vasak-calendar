@@ -62,6 +62,14 @@ pub struct Evento {
     pub todo_el_dia: bool,
     /// Si se repite. Se muestra una sola vez; ver la nota del módulo.
     pub se_repite: bool,
+    /// La zona en la que lo escribieron, tal como venía en el archivo.
+    ///
+    /// Vacía cuando el evento venía en UTC, cuando es de día completo o cuando
+    /// no declaraba ninguna. Va como texto y no resuelta porque es para
+    /// **mostrar**: la ventana avisa cuando un evento está escrito en una zona
+    /// distinta de aquella en la que se está mirando la agenda, y para eso hace
+    /// falta el nombre que le puso quien lo escribió.
+    pub zona: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -197,11 +205,14 @@ pub fn fecha_de(
     zona.a_utc(local).map(|momento| (momento, false))
 }
 
-/// El `TZID` de los parámetros de una línea, si lo trae.
-fn tzid_de(parametros: &[String]) -> Option<&str> {
+/// El `TZID` de los parámetros de una línea, si lo trae, sin comillas.
+pub fn tzid_de(parametros: &[String]) -> Option<&str> {
     parametros.iter().find_map(|p| {
         let (nombre, valor) = p.split_once('=')?;
-        nombre.trim().eq_ignore_ascii_case("TZID").then_some(valor)
+        nombre
+            .trim()
+            .eq_ignore_ascii_case("TZID")
+            .then(|| crate::zonas::sin_comillas(valor.trim()))
     })
 }
 
@@ -266,7 +277,16 @@ pub fn eventos_de(ical: &str) -> Vec<Evento> {
         match nombre.as_str() {
             "UID" => crudo.uid = Some(valor),
             "SUMMARY" => crudo.titulo = Some(texto_de(&valor)),
-            "DTSTART" => crudo.inicio = fecha_de(&valor, &parametros, &zonas),
+            "DTSTART" => {
+                crudo.inicio = fecha_de(&valor, &parametros, &zonas);
+                // La del comienzo y no la del fin: es la que la persona lee
+                // cuando mira a qué hora empieza algo.
+                crudo.zona = (!valor.ends_with('Z'))
+                    .then(|| tzid_de(&parametros))
+                    .flatten()
+                    .unwrap_or_default()
+                    .to_string();
+            }
             "DTEND" => crudo.fin = fecha_de(&valor, &parametros, &zonas),
             "RRULE" => crudo.se_repite = true,
             _ => {}
@@ -283,6 +303,7 @@ struct EventoCrudo {
     inicio: Option<(DateTime<Utc>, bool)>,
     fin: Option<(DateTime<Utc>, bool)>,
     se_repite: bool,
+    zona: String,
 }
 
 impl EventoCrudo {
@@ -307,6 +328,9 @@ impl EventoCrudo {
             fin: fin.to_rfc3339(),
             todo_el_dia,
             se_repite: self.se_repite,
+            // Un evento de día completo no tiene hora, así que no tiene zona,
+            // aunque el archivo le haya puesto una.
+            zona: if todo_el_dia { String::new() } else { self.zona },
         })
     }
 }
@@ -699,6 +723,36 @@ mod tests {
     const UN_EVENTO: &str = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r\n\
         SUMMARY:Reunión\\, con Ana\r\nDTSTART:20260915T140000Z\r\n\
         DTEND:20260915T150000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    /// El evento lleva la zona en la que lo escribieron, para que la ventana
+    /// pueda avisar cuando no es la misma en la que se está mirando la agenda.
+    #[test]
+    fn el_evento_lleva_la_zona_en_la_que_lo_escribieron() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\n\
+            DTSTART;TZID=Europe/Madrid:20260915T140000\r\n\
+            DTEND;TZID=Europe/Madrid:20260915T150000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert_eq!(eventos_de(ical)[0].zona, "Europe/Madrid");
+
+        // Entre comillas es el mismo nombre, no otro.
+        let comillado = ical.replace("TZID=Europe/Madrid", "TZID=\"Europe/Madrid\"");
+        assert_eq!(eventos_de(&comillado)[0].zona, "Europe/Madrid");
+    }
+
+    /// Una fecha en UTC ya es un instante: no hay ninguna zona que mostrar.
+    #[test]
+    fn un_evento_en_utc_no_lleva_zona() {
+        assert_eq!(eventos_de(UN_EVENTO)[0].zona, "");
+    }
+
+    /// Y uno de día completo tampoco, aunque el archivo le ponga una: no tiene
+    /// hora, así que no hay a qué reloj referirla.
+    #[test]
+    fn un_evento_de_dia_completo_no_lleva_zona() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\n\
+            DTSTART;TZID=Europe/Madrid;VALUE=DATE:20260915\r\n\
+            END:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert_eq!(eventos_de(ical)[0].zona, "");
+    }
 
     #[test]
     fn se_lee_un_evento() {

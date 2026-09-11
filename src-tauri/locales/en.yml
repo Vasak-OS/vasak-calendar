@@ -16,6 +16,11 @@ calendario:
   sinTitulo: (untitled)
   seRepite: Repeats
   seRepiteDetalle: For now it only shows on the day it starts.
+  escritoEn: "Written in {0} time"
+  zonaEtiqueta: "Calendar time zone"
+  zonaAyuda: "Which clock the events are shown in"
+  zonaDelSistema: "System ({0})"
+  viendoEn: "Showing {0} time"
   masEventosOne: "+{0} more event"
   masEventosOther: "+{0} more events"
 cuentas:

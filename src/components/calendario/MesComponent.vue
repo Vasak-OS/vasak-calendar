@@ -2,11 +2,13 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import { claveSegunCantidad, interpolar } from '@/tools/interpolar';
-import { claveDe, type Dia, type Evento } from '@/tools/mes';
+import type { Dia, Evento } from '@/tools/mes';
 
 const props = defineProps<{
 	dias: Dia[];
-	eventosDe: (fecha: Date) => Evento[];
+	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
+	zona: string;
+	eventosDe: (clave: string) => Evento[];
 }>();
 
 const { t, locale } = useI18n();
@@ -38,11 +40,25 @@ const nombresDeDias = computed(() => {
 	});
 });
 
+// Los tres formatos llevan `timeZone`: sin eso el número del día y la hora del
+// evento salen en la zona del sistema aunque la agenda se esté mirando en otra,
+// y la cuadrícula diría una cosa y las horas otra.
 const formatoDeHora = computed(
-	() => new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit' })
+	() =>
+		new Intl.DateTimeFormat(locale.value, {
+			hour: '2-digit',
+			minute: '2-digit',
+			timeZone: props.zona,
+		})
 );
 
-const formatoDeDia = computed(() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'full' }));
+const formatoDeDia = computed(
+	() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'full', timeZone: props.zona })
+);
+
+const formatoDeNumero = computed(
+	() => new Intl.DateTimeFormat(locale.value, { day: 'numeric', timeZone: props.zona })
+);
 
 /** Las seis filas de siete días. */
 const semanas = computed(() => {
@@ -54,11 +70,11 @@ const semanas = computed(() => {
 });
 
 function visiblesDe(dia: Dia): Evento[] {
-	return props.eventosDe(dia.fecha).slice(0, VISIBLES);
+	return props.eventosDe(dia.clave).slice(0, VISIBLES);
 }
 
 function sobrantesDe(dia: Dia): number {
-	return Math.max(0, props.eventosDe(dia.fecha).length - VISIBLES);
+	return Math.max(0, props.eventosDe(dia.clave).length - VISIBLES);
 }
 
 function tituloDe(evento: Evento): string {
@@ -80,7 +96,22 @@ function horaDe(evento: Evento): string {
  * se lee.
  */
 function descripcionDe(evento: Evento): string {
-	return interpolar(t('calendario.eventosDelDia'), horaDe(evento), tituloDe(evento));
+	const base = interpolar(t('calendario.eventosDelDia'), horaDe(evento), tituloDe(evento));
+	const otra = zonaAjenaDe(evento);
+	return otra ? `${base} — ${interpolar(t('calendario.escritoEn'), otra)}` : base;
+}
+
+/**
+ * En qué zona lo escribieron, si no es la misma en la que se está mirando.
+ *
+ * Vacío cuando coinciden, que es el caso normal y no hace falta decir. Cuando no
+ * coinciden importa: la hora que se muestra es correcta, pero quien escribió
+ * «10:00» en Madrid espera leer 10:00, y va a leer otra cosa. Decir en qué zona
+ * está escrito es la diferencia entre que eso se entienda y que parezca un error
+ * del calendario.
+ */
+function zonaAjenaDe(evento: Evento): string {
+	return evento.zona && evento.zona !== props.zona ? evento.zona : '';
 }
 
 function resumenSobrantes(cantidad: number): string {
@@ -122,7 +153,7 @@ function resumenSobrantes(cantidad: number): string {
         role="row">
         <div
           v-for="dia in semana"
-          :key="claveDe(dia.fecha)"
+          :key="dia.clave"
           class="flex min-h-0 flex-col gap-0.5 overflow-hidden border-ui-border border-r border-b p-1 last:border-r-0"
           :class="{
             // Los días del mes anterior y del siguiente se ven, porque son días
@@ -139,7 +170,7 @@ function resumenSobrantes(cantidad: number): string {
                 dia.esHoy ? 'bg-primary font-semibold text-tx-on-primary' : '',
                 dia.delMes ? 'text-tx-main' : 'text-tx-muted',
               ]">
-              {{ dia.fecha.getDate() }}
+              {{ formatoDeNumero.format(dia.fecha) }}
             </span>
           </div>
 
@@ -165,6 +196,11 @@ function resumenSobrantes(cantidad: number): string {
               <!-- Que se repite se dice, porque esta versión lo muestra una sola
                    vez: sin la marca, una reunión semanal parece única y las
                    demás semanas parecen libres. -->
+              <span
+                v-if="zonaAjenaDe(evento)"
+                class="shrink-0 text-tx-muted"
+                :title="interpolar(t('calendario.escritoEn'), zonaAjenaDe(evento))"
+                aria-hidden="true">🌐</span>
               <span
                 v-if="evento.se_repite"
                 class="shrink-0 text-tx-muted"
