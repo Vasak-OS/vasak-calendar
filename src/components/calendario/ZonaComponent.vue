@@ -9,6 +9,10 @@ const props = defineProps<{
 	elegida: string;
 	/** En cuál está el sistema, para nombrarla en la opción de arriba. */
 	delSistema: string;
+	/** La que se está usando, que es la elegida o la del sistema. */
+	enUso: string;
+	/** Si lo que se está mirando no es la hora de acá. */
+	ajena: boolean;
 }>();
 
 const emit = defineEmits<(e: 'elegir', zona: string) => void>();
@@ -20,8 +24,12 @@ const { t } = useI18n();
  *
  * Son cientos de zonas: una lista propia necesitaría búsqueda, teclado y
  * desplazamiento virtual para no ser peor que la del sistema, que ya sabe hacer
- * todo eso —incluido escribir las primeras letras para saltar— y además se ve
- * como el resto del escritorio.
+ * todo eso —incluido escribir las primeras letras para saltar—.
+ *
+ * Lo que sí hay que hacer es **vestirlo**: sin colores propios el motor lo pinta
+ * con los suyos, y en una ventana oscura quedaba un rectángulo blanco. Las
+ * opciones desplegadas las dibuja el sistema y no se pueden pintar del todo, así
+ * que se les da fondo y texto explícitos para que al menos no queden ilegibles.
  *
  * La del sistema va primero y aparte, porque es la que casi todo el mundo quiere
  * y la que hay que poder recuperar de un golpe después de probar otra.
@@ -42,17 +50,36 @@ function legible(zona: string): string {
 </script>
 
 <template>
-  <label class="flex items-center gap-1 text-sm">
-    <span class="sr-only">{{ t('calendario.zonaEtiqueta') }}</span>
+  <section class="flex flex-col gap-1">
+    <h2 class="font-medium text-tx-muted text-xs uppercase">
+      {{ t('calendario.zonaEtiqueta') }}
+    </h2>
     <select
-      class="max-w-56 truncate rounded-corner border border-ui-border-strong bg-transparent px-1 py-0.5 text-sm"
+      class="w-full truncate rounded-corner border border-ui-border-strong bg-ui-surface px-2 py-1 text-sm text-tx-main"
       :value="props.elegida"
       :title="t('calendario.zonaAyuda')"
       @change="emit('elegir', ($event.target as HTMLSelectElement).value)">
-      <option value="">
-        {{ interpolar(t('calendario.zonaDelSistema'), legible(props.delSistema)) }}
+      <option class="bg-ui-bg text-tx-main" value="">
+        {{ t('calendario.zonaDelSistema') }}
       </option>
-      <option v-for="zona in zonas" :key="zona" :value="zona">{{ legible(zona) }}</option>
+      <option v-for="zona in zonas" :key="zona" class="bg-ui-bg text-tx-main" :value="zona">
+        {{ legible(zona) }}
+      </option>
     </select>
-  </label>
+
+    <!-- El nombre de la zona va **abajo y no adentro** del desplegable.
+         «La del sistema (America/Argentina/Buenos Aires)» no entra en el ancho
+         de esta barra y quedaba cortado a la mitad, justo en la parte que dice
+         cuál es. Acá abajo entra entero y puede partirse en dos renglones.
+
+         Y que la agenda no esté en la hora de acá se dice, no se deduce: quien
+         fijó una zona para viajar se olvida, y una agenda que muestra horas de
+         otro país sin avisar se lee mal sin que nada lo delate. -->
+    <p
+      class="break-words text-xs"
+      :class="props.ajena ? 'text-status-warning' : 'text-tx-muted'"
+      :role="props.ajena ? 'status' : undefined">
+      {{ props.ajena ? interpolar(t('calendario.viendoEn'), legible(props.enUso)) : legible(props.enUso) }}
+    </p>
+  </section>
 </template>

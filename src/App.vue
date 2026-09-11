@@ -2,7 +2,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted, onUnmounted, type Ref, ref } from 'vue';
-import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import CalendarioView from '@/views/CalendarioView.vue';
 
 let unListenConfig: Ref<UnlistenFn | null> = ref(null);
@@ -30,7 +29,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <WindowAppLayout>
-    <CalendarioView />
-  </WindowAppLayout>
+  <!-- La vista es dueña de la ventana entera, layout incluido.
+       Así el mes y los botones de la barra salen del mismo `useCalendario()`
+       que la cuadrícula, sin duplicar el estado ni teletransportar nada. -->
+  <CalendarioView />
 </template>

@@ -1,18 +1,29 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import ZonaComponent from '@/components/calendario/ZonaComponent.vue';
 import type { Calendario, Cuenta } from '@/composables/use-calendario';
 
 defineProps<{
 	cuentas: Cuenta[];
 	calendarios: Calendario[];
 	avisos: string[];
+	zona: string;
+	zonaElegida: string;
+	zonaDelSistema: string;
+	zonaAjena: boolean;
 }>();
+
+const emit = defineEmits<(e: 'elegirZona', zona: string) => void>();
 
 const { t } = useI18n();
 </script>
 
 <template>
   <aside class="flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-ui-border border-r p-3">
+    <!-- Lo de arriba es lo que hay; el selector de zona va abajo de todo, con un
+         `flex-1` empujándolo: es una preferencia y no contenido, y arriba
+         competiría con las cuentas y los calendarios, que es lo que se viene a
+         mirar. -->
     <!-- Sin ninguna cuenta, lo que hace falta es decir **qué hacer**. Una lista
          vacía sin explicación se lee como una aplicación rota. -->
     <div v-if="cuentas.length === 0" class="flex flex-col gap-1">
@@ -65,5 +76,14 @@ const { t } = useI18n();
         <li v-for="aviso in avisos" :key="aviso" class="text-tx-muted text-xs">{{ aviso }}</li>
       </ul>
     </section>
+
+    <div class="flex-1"></div>
+
+    <ZonaComponent
+      :elegida="zonaElegida"
+      :del-sistema="zonaDelSistema"
+      :en-uso="zona"
+      :ajena="zonaAjena"
+      @elegir="emit('elegirZona', $event)" />
   </aside>
 </template>
