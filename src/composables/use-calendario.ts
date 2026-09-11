@@ -236,20 +236,22 @@ export function useCalendario() {
 		if (esZonaConocida(aviso.payload)) {
 			zonaDelSistema.value = aviso.payload;
 		}
-	}).then((cancelar) => {
-		// La ventana se puede cerrar antes de que esto termine de engancharse, y
-		// entonces no habría quién cancele: el oyente quedaría vivo apuntando a
-		// una vista que ya no existe.
-		if (descartado) {
-			cancelar();
-			return;
-		}
-		dejarDeEscuchar = cancelar;
-	}).catch((e) => {
-		// Sin el aviso, la zona igual se vuelve a leer cada vez que se vuelve a
-		// la ventana. Se pierde enterarse en el momento, no enterarse.
-		console.error('no se pudo escuchar el cambio de zona horaria', e);
-	});
+	})
+		.then((cancelar) => {
+			// La ventana se puede cerrar antes de que esto termine de engancharse, y
+			// entonces no habría quién cancele: el oyente quedaría vivo apuntando a
+			// una vista que ya no existe.
+			if (descartado) {
+				cancelar();
+				return;
+			}
+			dejarDeEscuchar = cancelar;
+		})
+		.catch((e) => {
+			// Sin el aviso, la zona igual se vuelve a leer cada vez que se vuelve a
+			// la ventana. Se pierde enterarse en el momento, no enterarse.
+			console.error('no se pudo escuchar el cambio de zona horaria', e);
+		});
 
 	const latido = setInterval(() => {
 		const ahora = new Date();
