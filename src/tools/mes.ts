@@ -6,10 +6,28 @@
  * perfectamente bien, y la persona se entera cuando llega tarde a algo. Acá se
  * puede probar sin montar nada.
  *
- * Todo lo de este archivo trabaja en la **hora local** de quien mira. Un evento
- * llega en UTC desde el servidor; qué día del mes ocupa depende de dónde está la
- * persona, y no de dónde está el servidor.
+ * ── Todo esto pasa en «la zona de la agenda» ────────────────────────────────
+ *
+ * Un evento llega en UTC desde el programa. Qué día del mes ocupa no depende de
+ * dónde está el servidor: depende del reloj contra el que lo mire la persona. Y
+ * ese reloj no es necesariamente el del sistema — quien viaja puede querer
+ * seguir viendo su agenda con la hora de su casa.
+ *
+ * Así que cada función de acá recibe la zona y trabaja con **fechas civiles**
+ * —lo que marca un reloj colgado en esa zona—, no con los métodos de `Date`, que
+ * siempre contestan en la zona del sistema. El puente está en `zona.ts`.
  */
+
+import {
+	type Civil,
+	civilDe,
+	claveCivil,
+	columnaCivil,
+	medianocheDe,
+	mismoDiaCivil,
+	primeroDeMesCivil,
+	sumarDiasCivil,
+} from '@/tools/zona';
 
 /** Cuántos días trae una semana. Nombrado para que la aritmética se lea. */
 const DIAS_POR_SEMANA = 7;
@@ -26,8 +44,16 @@ const SEMANAS = 6;
 
 /** Un día de la cuadrícula. */
 export interface Dia {
-	/** La medianoche local de ese día. */
+	/** La medianoche de ese día **en la zona de la agenda**, como instante. */
 	fecha: Date;
+	/**
+	 * `AAAA-MM-DD` en esa zona.
+	 *
+	 * Va calculada acá y no en quien la use: sacarla de la fecha necesita la
+	 * zona, y así los componentes no tienen que conocerla para identificar un
+	 * día.
+	 */
+	clave: string;
 	/** Si cae en el mes que se está mirando, o es relleno del anterior/siguiente. */
 	delMes: boolean;
 	esHoy: boolean;
@@ -43,75 +69,45 @@ export interface Evento {
 	/** Los nombres vienen del programa tal cual: Tauri no los convierte. */
 	todo_el_dia: boolean;
 	se_repite: boolean;
+	/**
+	 * La zona en la que lo escribieron, tal como venía en el archivo.
+	 *
+	 * Vacía si el evento venía en UTC, si era de día completo o si no decía
+	 * ninguna. Sirve para avisar cuando un evento está escrito en una zona
+	 * distinta de aquella en la que se está mirando la agenda.
+	 */
+	zona: string;
 	calendario: string;
 	color: string | null;
 }
 
-/**
- * La medianoche local de un día.
- *
- * `new Date(a, m, d)` y no `new Date('2026-09-15')`: la segunda forma la
- * interpreta el motor como **UTC**, así que en cualquier zona al oeste de
- * Greenwich devuelve las nueve de la noche del día anterior. Es la manera más
- * común de correr un calendario un día entero.
- */
-export function medianoche(fecha: Date): Date {
-	return new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate());
-}
-
-/**
- * En qué columna va un día, con la semana empezando el lunes.
- *
- * `getDay()` cuenta desde el domingo. En español —y en la norma ISO— la semana
- * empieza el lunes, así que sin esta rotación el mes entero sale corrido una
- * columna.
- */
-export function columna(fecha: Date): number {
-	return (fecha.getDay() + 6) % DIAS_POR_SEMANA;
-}
-
-/** Suma días respetando los cambios de mes, de año y de horario de verano. */
-export function sumarDias(fecha: Date, dias: number): Date {
-	const salida = new Date(fecha);
-	salida.setDate(salida.getDate() + dias);
-	return salida;
-}
-
-/** El mismo día de otro mes, sin desbordar. */
-export function sumarMeses(fecha: Date, meses: number): Date {
-	// El día 1 y no el que sea: `setMonth` sobre un 31 de enero más un mes da 3
-	// de marzo, porque febrero no tiene 31. Como esto se usa para moverse entre
-	// meses, lo que importa es el mes y no el día.
-	return new Date(fecha.getFullYear(), fecha.getMonth() + meses, 1);
-}
-
-/** Si dos momentos caen el mismo día local. */
-export function mismoDia(a: Date, b: Date): boolean {
-	return (
-		a.getFullYear() === b.getFullYear() &&
-		a.getMonth() === b.getMonth() &&
-		a.getDate() === b.getDate()
-	);
-}
-
-/**
- * Las 42 celdas del mes que contiene `referencia`.
- *
- * `hoy` se pasa como argumento en vez de leer el reloj acá: así se puede probar
- * qué celda queda marcada sin depender de cuándo corra el test.
- */
-export function cuadricula(referencia: Date, hoy: Date = new Date()): Dia[] {
-	const primero = new Date(referencia.getFullYear(), referencia.getMonth(), 1);
-	const arranque = sumarDias(primero, -columna(primero));
+/** Las 42 celdas del mes que contiene `referencia`, en la zona de la agenda. */
+export function cuadricula(referencia: Date, zona: string, hoy: Date = new Date()): Dia[] {
+	const mirando = civilDe(referencia, zona);
+	const primero: Civil = { ...mirando, dia: 1, hora: 0, minuto: 0 };
+	const arranque = sumarDiasCivil(primero, -columnaCivil(primero));
+	const civilDeHoy = civilDe(hoy, zona);
 
 	return Array.from({ length: SEMANAS * DIAS_POR_SEMANA }, (_, i) => {
-		const fecha = sumarDias(arranque, i);
+		const civil = sumarDiasCivil(arranque, i);
 		return {
-			fecha,
-			delMes: fecha.getMonth() === referencia.getMonth(),
-			esHoy: mismoDia(fecha, hoy),
+			fecha: medianocheDe(civil, zona),
+			clave: claveCivil(civil),
+			delMes: civil.mes === mirando.mes && civil.anio === mirando.anio,
+			esHoy: mismoDiaCivil(civil, civilDeHoy),
 		};
 	});
+}
+
+/** El primero del mes que contiene ese instante, en esa zona. */
+export function primeroDelMes(instante: Date, zona: string): Date {
+	const civil = civilDe(instante, zona);
+	return medianocheDe({ ...civil, dia: 1 }, zona);
+}
+
+/** El primero de otro mes, para moverse de a uno. */
+export function sumarMeses(instante: Date, meses: number, zona: string): Date {
+	return medianocheDe(primeroDeMesCivil(civilDe(instante, zona), meses), zona);
 }
 
 /**
@@ -121,15 +117,16 @@ export function cuadricula(referencia: Date, hoy: Date = new Date()): Dia[] {
  * que la persona ve, y pedir sólo del 1 al 30 las deja siempre vacías. Se ve
  * como si nunca hubiera nada los últimos días de agosto.
  */
-export function rangoDe(dias: Dia[]): { desde: string; hasta: string } {
+export function rangoDe(dias: Dia[], zona: string): { desde: string; hasta: string } {
 	const primero = dias[0].fecha;
 	const ultimo = dias[dias.length - 1].fecha;
+	// El final del último día, no su comienzo: un evento del sábado a las tres de
+	// la tarde queda fuera de un rango que termina el sábado a las cero horas.
+	const cierre = sumarDiasCivil(civilDe(ultimo, zona), 1);
+
 	return {
 		desde: primero.toISOString(),
-		// El final del último día, no su comienzo: un evento del sábado a las
-		// tres de la tarde queda fuera de un rango que termina el sábado a las
-		// cero horas.
-		hasta: sumarDias(medianoche(ultimo), 1).toISOString(),
+		hasta: medianocheDe(cierre, zona).toISOString(),
 	};
 }
 
@@ -142,27 +139,36 @@ export function rangoDe(dias: Dia[]): { desde: string; hasta: string } {
  *
  * `dias` no es sólo para saber qué mostrar: **acota el recorrido**. Un evento que
  * el servidor manda con fechas absurdas —un `DTEND` en el año 9999, que en un
- * calendario ajeno es cuestión de tiempo— daría millones de vueltas, cada una con
- * su `Date` y su cadena, y la ventana quedaría congelada varios segundos sin que
- * nada explique por qué. Recortado a la cuadrícula, ningún evento da más de 42.
- *
- * La clave del mapa es la fecha local en `AAAA-MM-DD`, y no el `Date`, porque
- * dos `Date` del mismo día no son la misma clave.
+ * calendario ajeno es cuestión de tiempo— daría millones de vueltas y la ventana
+ * quedaría congelada varios segundos sin que nada lo explique. Acá se busca en
+ * qué celda cae cada punta y se recorre el pedazo de la cuadrícula que hay entre
+ * las dos, así que ningún evento da más de 42 vueltas.
  */
-export function porDia(eventos: Evento[], dias: Dia[]): Map<string, Evento[]> {
+export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string, Evento[]> {
 	const mapa = new Map<string, Evento[]>();
 	if (dias.length === 0) {
 		return mapa;
 	}
-	const primero = medianoche(dias[0].fecha);
-	const postrero = medianoche(dias[dias.length - 1].fecha);
+	const celda = new Map(dias.map((dia, i) => [dia.clave, i]));
+	const primeraClave = dias[0].clave;
+	const ultimaClave = dias[dias.length - 1].clave;
 
 	for (const evento of eventos) {
 		const inicio = new Date(evento.inicio);
-		const fin = new Date(evento.fin);
 		if (Number.isNaN(inicio.getTime())) {
 			continue;
 		}
+		const fin = new Date(evento.fin);
+
+		// **Un evento de día completo no tiene zona, y por eso se lee en UTC.**
+		//
+		// El programa lo manda como la medianoche UTC de ese día, que es la forma
+		// de decir «el 15» sin decir a qué hora. Leerlo en la zona de la agenda lo
+		// corre: en Buenos Aires esa medianoche son las nueve de la noche del 14,
+		// y el evento aparecía **un día antes**. El feriado del 15 caía el 14 para
+		// medio mundo, en silencio, que es exactamente el error que este archivo
+		// existe para no cometer.
+		const suya = evento.todo_el_dia ? 'UTC' : zona;
 
 		// El último día que ocupa.
 		//
@@ -170,22 +176,28 @@ export function porDia(eventos: Evento[], dias: Dia[]): Map<string, Evento[]> {
 		// —así lo define el formato—, y contarla como un día más lo pintaría un
 		// día de sobra. Con hora, en cambio, la medianoche exacta sí es el corte
 		// y tampoco suma un día.
-		let ultimo = medianoche(inicio);
+		let cierre = inicio;
 		if (!Number.isNaN(fin.getTime()) && fin > inicio) {
-			const cierre = fin.getTime() === medianoche(fin).getTime() ? sumarDias(fin, -1) : fin;
-			if (cierre >= inicio) {
-				ultimo = medianoche(cierre);
-			}
+			const civilFin = civilDe(fin, suya);
+			const enLaMedianoche = civilFin.hora === 0 && civilFin.minuto === 0;
+			const candidato = enLaMedianoche ? new Date(fin.getTime() - 60000) : fin;
+			cierre = candidato >= inicio ? candidato : inicio;
 		}
 
 		// Recortado a lo que se ve. Lo de afuera no tiene celda donde ir.
-		const desde = medianoche(inicio) < primero ? primero : medianoche(inicio);
-		if (ultimo > postrero) {
-			ultimo = postrero;
+		//
+		// Las claves son `AAAA-MM-DD` con el año rellenado a cuatro dígitos, así
+		// que compararlas como texto es compararlas como fechas.
+		const desdeClave = claveCivil(civilDe(inicio, suya));
+		const hastaClave = claveCivil(civilDe(cierre, suya));
+		if (hastaClave < primeraClave || desdeClave > ultimaClave) {
+			continue;
 		}
+		const desde = celda.get(desdeClave) ?? 0;
+		const hasta = celda.get(hastaClave) ?? dias.length - 1;
 
-		for (let dia = desde; dia <= ultimo; dia = sumarDias(dia, 1)) {
-			const clave = claveDe(dia);
+		for (let i = desde; i <= hasta; i++) {
+			const clave = dias[i].clave;
 			const delDia = mapa.get(clave);
 			if (delDia) {
 				delDia.push(evento);
@@ -208,11 +220,4 @@ export function porDia(eventos: Evento[], dias: Dia[]): Map<string, Evento[]> {
 	}
 
 	return mapa;
-}
-
-/** La clave de un día en el mapa: su fecha **local** en `AAAA-MM-DD`. */
-export function claveDe(fecha: Date): string {
-	const mes = String(fecha.getMonth() + 1).padStart(2, '0');
-	const dia = String(fecha.getDate()).padStart(2, '0');
-	return `${fecha.getFullYear()}-${mes}-${dia}`;
 }

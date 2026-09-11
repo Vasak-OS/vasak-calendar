@@ -153,6 +153,7 @@ mod tests {
                 fin: "2026-09-15T15:00:00+00:00".into(),
                 todo_el_dia: false,
                 se_repite: false,
+                zona: "Europe/Madrid".into(),
             },
             calendario: "https://nube.ejemplo.com/dav/calendars/ana/trabajo/".into(),
             color: Some("#FF5733".into()),
