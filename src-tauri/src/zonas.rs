@@ -514,6 +514,12 @@ fn regla_de(valor: &str) -> Option<ReglaAnual> {
     let mut dia_de_semana = None;
 
     for parte in valor.split(';') {
+        // Un punto y coma de más —`BYDAY=-1SU;`— deja un pedazo vacío. No es un
+        // pedazo que no se entienda: no hay nada ahí. Descartar la regla entera
+        // por eso mandaría una zona perfectamente legible al respaldo.
+        if parte.trim().is_empty() {
+            continue;
+        }
         let (nombre, contenido) = parte.split_once('=')?;
         match nombre.trim().to_ascii_uppercase().as_str() {
             "FREQ" => anual = contenido.trim().eq_ignore_ascii_case("YEARLY"),
@@ -541,6 +547,14 @@ fn regla_de(valor: &str) -> Option<ReglaAnual> {
     }
 }
 
+/// Cuántas veces puede aparecer un día de semana en un mes.
+///
+/// Cinco, y por eso `BYDAY` en una transición sólo admite de -5 a 5 sin el cero.
+/// No es una restricción de estilo: sin ella, un `BYDAY=999999999SU` de un
+/// archivo cualquiera hace que el cálculo del día **entre en pánico** al sumarle
+/// esos años a una fecha, y un archivo lo escribe quien quiera.
+const MAX_ORDINAL: i32 = 5;
+
 /// Lee un `BYDAY`: `-1SU`, `2MO`, `SU`.
 ///
 /// Sin número adelante es «todos los domingos del mes», que en una transición
@@ -549,6 +563,12 @@ fn regla_de(valor: &str) -> Option<ReglaAnual> {
 fn dia_de_semana_de(valor: &str) -> Option<(i32, Weekday)> {
     // Una lista —`MO,TU`— no define una transición única. Se descarta.
     if valor.contains(',') {
+        return None;
+    }
+    // **Sólo ASCII**, y no por purismo: los dos últimos octetos de un valor con
+    // acentos pueden caer en medio de un carácter, y cortar ahí entra en pánico.
+    // Un `BYDAY` válido son dos letras y un número, así que nada se pierde.
+    if !valor.is_ascii() {
         return None;
     }
     let corte = valor.len().checked_sub(2)?;
@@ -566,7 +586,7 @@ fn dia_de_semana_de(valor: &str) -> Option<(i32, Weekday)> {
     };
 
     let ordinal = if prefijo.is_empty() { 1 } else { prefijo.parse::<i32>().ok()? };
-    (ordinal != 0).then_some((ordinal, dia))
+    (ordinal != 0 && ordinal.abs() <= MAX_ORDINAL).then_some((ordinal, dia))
 }
 
 /// Saca las comillas de un valor de parámetro.
@@ -832,6 +852,47 @@ mod tests {
         assert_eq!(regla_de("FREQ=YEARLY;INTERVAL=2;BYMONTH=3;BYDAY=-1SU"), None);
         // Sin mes no hay nada que calcular.
         assert_eq!(regla_de("FREQ=YEARLY;BYDAY=-1SU"), None);
+    }
+
+    /// Un `BYDAY` no ASCII cortaba a la mitad de un carácter y entraba en
+    /// pánico. Lo escribe quien mande el archivo.
+    #[test]
+    fn un_byday_con_acentos_no_rompe_nada() {
+        for basura in ["€", "añSU", "SÜ", "áé", "\u{1f600}"] {
+            assert_eq!(dia_de_semana_de(basura), None, "{basura:?}");
+        }
+    }
+
+    /// Un ordinal enorme le sumaba millones de días a una fecha, y eso también
+    /// entraba en pánico. Un día de semana aparece cinco veces en un mes como
+    /// mucho.
+    #[test]
+    fn un_ordinal_fuera_de_rango_se_rechaza() {
+        assert_eq!(dia_de_semana_de("999999999SU"), None);
+        assert_eq!(dia_de_semana_de("-999999999SU"), None);
+        assert_eq!(dia_de_semana_de("6SU"), None);
+        assert_eq!(dia_de_semana_de("0SU"), None);
+
+        // Y el rango que sí vale sigue valiendo.
+        assert_eq!(dia_de_semana_de("5SU"), Some((5, Weekday::Sun)));
+        assert_eq!(dia_de_semana_de("-1SU"), Some((-1, Weekday::Sun)));
+        assert_eq!(dia_de_semana_de("SU"), Some((1, Weekday::Sun)));
+    }
+
+    /// Un punto y coma de más no puede mandar una regla legible al respaldo.
+    #[test]
+    fn un_punto_y_coma_de_mas_no_descarta_la_regla() {
+        assert_eq!(
+            regla_de("FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;"),
+            Some(ReglaAnual::DiaDeSemana { mes: 3, ordinal: -1, dia: Weekday::Sun })
+        );
+        assert_eq!(
+            regla_de(";;FREQ=YEARLY;;BYMONTH=3;BYDAY=-1SU"),
+            Some(ReglaAnual::DiaDeSemana { mes: 3, ordinal: -1, dia: Weekday::Sun })
+        );
+        // Un pedazo que **sí** dice algo y no se entiende sigue descartando la
+        // regla entera: interpretarla a medias es peor.
+        assert_eq!(regla_de("FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;basura"), None);
     }
 
     /// Una zona definida sólo con fechas sueltas cae al respaldo de la
