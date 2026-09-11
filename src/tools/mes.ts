@@ -33,14 +33,34 @@ import {
 const DIAS_POR_SEMANA = 7;
 
 /**
- * Cuántas semanas tiene la cuadrícula.
+ * Cuántas semanas puede llegar a ocupar un mes.
  *
- * Seis y no «las que hagan falta»: un mes de 31 días que arranca en domingo
- * ocupa seis filas, y uno de febrero que arranca lunes ocupa cuatro. Con un
- * número variable la cuadrícula cambia de alto al pasar de mes y todo lo que hay
- * debajo salta. Seis siempre entra y siempre mide igual.
+ * Seis: un mes de 31 días que arranca en domingo las necesita. Es el tope, no la
+ * cantidad — ver [`semanasDe`].
  */
-const SEMANAS = 6;
+const MAX_SEMANAS = 6;
+
+/**
+ * Cuántas filas ocupa de verdad ese mes.
+ *
+ * **Las que hagan falta y no siempre seis.** Con seis fijas, septiembre de 2026
+ * dibujaba una séptima fila entera del mes siguiente, que no es relleno de los
+ * bordes: es una semana completa que no tiene nada que ver con lo que se está
+ * mirando.
+ *
+ * Que la cantidad cambie de mes a mes no mueve nada de lugar: la cuadrícula
+ * ocupa el alto que le da su contenedor y lo reparte entre las filas que haya,
+ * así que lo que cambia es el alto de cada celda y no el del mes.
+ */
+function semanasDe(primero: Civil, dias: number): number {
+	const ocupadas = Math.ceil((columnaCivil(primero) + dias) / DIAS_POR_SEMANA);
+	return Math.min(ocupadas, MAX_SEMANAS);
+}
+
+/** Cuántos días tiene el mes de esa fecha. */
+function diasDelMes(civil: Civil): number {
+	return sumarDiasCivil(primeroDeMesCivil(civil, 1), -1).dia;
+}
 
 /** Un día de la cuadrícula. */
 export interface Dia {
@@ -87,8 +107,9 @@ export function cuadricula(referencia: Date, zona: string, hoy: Date = new Date(
 	const primero: Civil = { ...mirando, dia: 1, hora: 0, minuto: 0 };
 	const arranque = sumarDiasCivil(primero, -columnaCivil(primero));
 	const civilDeHoy = civilDe(hoy, zona);
+	const semanas = semanasDe(primero, diasDelMes(mirando));
 
-	return Array.from({ length: SEMANAS * DIAS_POR_SEMANA }, (_, i) => {
+	return Array.from({ length: semanas * DIAS_POR_SEMANA }, (_, i) => {
 		const civil = sumarDiasCivil(arranque, i);
 		return {
 			fecha: medianocheDe(civil, zona),

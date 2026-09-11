@@ -3,10 +3,9 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed, onMounted } from 'vue';
 import CuentasComponent from '@/components/calendario/CuentasComponent.vue';
 import MesComponent from '@/components/calendario/MesComponent.vue';
-import ZonaComponent from '@/components/calendario/ZonaComponent.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import { useReactiveIcons } from '@/composables/useReactiveIcon';
-import { interpolar } from '@/tools/interpolar';
+import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 
 const { t, locale } = useI18n();
 const {
@@ -28,9 +27,13 @@ const {
 	irAHoy,
 } = useCalendario();
 
-const { anterior, siguiente } = useReactiveIcons({
+const { anterior, siguiente, actualizar, icono } = useReactiveIcons({
 	anterior: 'go-previous',
 	siguiente: 'go-next',
+	actualizar: 'view-refresh',
+	// El icono de la aplicación, no un símbolo: es la identidad de la ventana y
+	// va a color, como en el resto del escritorio.
+	icono: { name: 'calendar', type: 'icon' },
 });
 
 /**
@@ -52,50 +55,15 @@ onMounted(cargar);
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
-    <header class="flex items-center gap-2 border-ui-border border-b px-3 py-2">
-      <button
-        type="button"
-        class="rounded-corner p-1 hover:bg-ui-surface"
-        :aria-label="t('calendario.mesAnterior')"
-        @click="mesAnterior()">
-        <img :src="anterior" class="h-5 w-5" alt="" />
-      </button>
-      <button
-        type="button"
-        class="rounded-corner p-1 hover:bg-ui-surface"
-        :aria-label="t('calendario.mesSiguiente')"
-        @click="mesSiguiente()">
-        <img :src="siguiente" class="h-5 w-5" alt="" />
-      </button>
-      <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
-           único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
-           otra pista. -->
-      <h1 class="font-title text-lg capitalize" aria-live="polite">{{ titulo }}</h1>
-      <button
-        type="button"
-        class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
-        @click="irAHoy()">
-        {{ t('calendario.hoy') }}
-      </button>
+  <WindowAppLayout>
+    <template #barra>
+      <!-- El icono de la aplicación, a la izquierda de todo, como en el resto
+           del escritorio. -->
+      <img :src="icono" class="h-6 w-6 shrink-0" :alt="t('app.nombre')" />
 
-      <!-- Que la agenda no está en la hora de acá se dice en la cabecera, no en
-           un menú: quien fijó una zona para viajar se olvida, y una agenda que
-           muestra horas de otro país sin avisar se lee mal sin que nada lo
-           delate. -->
-      <span
-        v-if="zonaAjena"
-        class="rounded-corner bg-ui-surface px-2 py-0.5 text-tx-muted text-xs"
-        role="status">
-        {{ interpolar(t('calendario.viendoEn'), zona.replace(/_/g, ' ')) }}
-      </span>
-
+      <!-- Lo que sigue se va contra los controles de la ventana, que es donde
+           está el botón de actualizar en el resto de las aplicaciones. -->
       <span class="flex-1"></span>
-
-      <ZonaComponent
-        :elegida="zonaElegida"
-        :del-sistema="zonaDelSistema"
-        @elegir="elegirZona" />
 
       <!-- El estado de carga se dice, no se insinúa con un icono girando: sin
            esto, un servidor lento y un mes vacío se ven igual. -->
@@ -103,17 +71,67 @@ onMounted(cargar);
         {{ t('calendario.cargando') }}
       </span>
       <button
-        v-else
         type="button"
-        class="rounded-corner px-2 py-0.5 text-sm text-tx-muted hover:bg-ui-surface"
+        class="rounded-corner border border-ui-border bg-ui-bg/80 p-1 hover:bg-ui-surface disabled:opacity-50"
+        :aria-label="t('calendario.actualizar')"
+        :title="t('calendario.actualizar')"
+        :disabled="cargando"
         @click="cargar()">
-        {{ t('calendario.actualizar') }}
+        <img :src="actualizar" class="h-6 w-6" alt="" />
       </button>
-    </header>
+    </template>
 
-    <div class="flex min-h-0 flex-1">
-      <CuentasComponent :cuentas="cuentas" :calendarios="calendarios" :avisos="avisos" />
-      <MesComponent :dias="dias" :zona="zona" :eventos-de="eventosDe" />
-    </div>
-  </div>
+    <!-- Centrado en la barra entera, no en lo que sobra entre el icono y los
+         controles de la ventana. -->
+    <template #barraCentro>
+      <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
+           ir atrás a la izquierda de lo que se está mirando y la de ir adelante
+           a la derecha. -->
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="rounded-corner p-1 hover:bg-ui-surface"
+          :aria-label="t('calendario.mesAnterior')"
+          @click="mesAnterior()">
+          <img :src="anterior" class="h-5 w-5" alt="" />
+        </button>
+        <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
+             único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
+             otra pista. -->
+        <!-- `first-letter` y no `capitalize`: lo segundo sube **cada** palabra
+             y el título salía «Septiembre De 2026». En español sólo va la
+             primera, y el nombre del mes lo escribe `Intl` en minúscula. -->
+        <h1
+          class="min-w-44 text-center font-title text-base first-letter:uppercase"
+          aria-live="polite">
+          {{ titulo }}
+        </h1>
+        <button
+          type="button"
+          class="rounded-corner p-1 hover:bg-ui-surface"
+          :aria-label="t('calendario.mesSiguiente')"
+          @click="mesSiguiente()">
+          <img :src="siguiente" class="h-5 w-5" alt="" />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
+        @click="irAHoy()">
+        {{ t('calendario.hoy') }}
+      </button>
+    </template>
+
+    <CuentasComponent
+      :cuentas="cuentas"
+      :calendarios="calendarios"
+      :avisos="avisos"
+      :zona="zona"
+      :zona-elegida="zonaElegida"
+      :zona-del-sistema="zonaDelSistema"
+      :zona-ajena="zonaAjena"
+      @elegir-zona="elegirZona" />
+    <MesComponent :dias="dias" :zona="zona" :eventos-de="eventosDe" />
+  </WindowAppLayout>
 </template>

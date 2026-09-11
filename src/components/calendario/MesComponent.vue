@@ -145,7 +145,14 @@ function resumenSobrantes(cantidad: number): string {
          filas, y un elemento sin rol en el medio las desprende del árbol de
          accesibilidad. Las filas quedaban ahí pero la cuadrícula no las
          reconocía como suyas. -->
-    <div class="grid min-h-0 flex-1 grid-rows-6" role="rowgroup">
+    <!-- Las filas que tenga el mes, no seis fijas: septiembre de 2026 dibujaba
+         una séptima entera del mes siguiente. `1fr` cada una con `minmax(0,…)`,
+         que es lo que deja que la celda recorte su contenido en vez de estirar
+         la fila hasta desbordar la ventana. -->
+    <div
+      class="grid min-h-0 flex-1"
+      :style="{ gridTemplateRows: `repeat(${semanas.length}, minmax(0, 1fr))` }"
+      role="rowgroup">
       <div
         v-for="(semana, indice) in semanas"
         :key="indice"

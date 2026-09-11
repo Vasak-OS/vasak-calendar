@@ -43,15 +43,43 @@ function mediodia(iso: string): Date {
 }
 
 describe('cuadricula', () => {
-	test('siempre mide seis semanas', () => {
-		// Fijo y no variable: con un número de filas que cambia, la cuadrícula
-		// cambia de alto al pasar de mes y todo lo que hay debajo salta.
-		for (const mes of ['2026-01-01', '2026-02-01', '2026-05-01', '2026-08-01', '2026-12-01']) {
-			expect(cuadricula(mediodia(mes), ZONA)).toHaveLength(42);
+	test('mide las semanas que ocupa el mes y ni una más', () => {
+		// Con seis fijas, septiembre de 2026 dibujaba una séptima fila entera del
+		// mes siguiente: no es relleno de los bordes, es una semana completa que
+		// no tiene nada que ver con lo que se está mirando.
+		//
+		// Septiembre de 2026 arranca martes y tiene 30 días: 1 de relleno + 30 son
+		// 31, o sea cinco filas.
+		expect(cuadricula(mediodia('2026-09-01'), ZONA)).toHaveLength(5 * 7);
+
+		// Febrero de 2027 arranca lunes y tiene 28: cuatro filas justas, sin nada
+		// de relleno.
+		expect(cuadricula(mediodia('2027-02-01'), ZONA)).toHaveLength(4 * 7);
+
+		// Agosto de 2026 arranca sábado y tiene 31: 5 de relleno + 31 son 36, o
+		// sea seis filas, que es el máximo posible.
+		expect(cuadricula(mediodia('2026-08-01'), ZONA)).toHaveLength(6 * 7);
+	});
+
+	test('ninguna fila queda entera fuera del mes', () => {
+		// Es la regla de la que sale todo lo anterior, comprobada en los doce
+		// meses de dos años en vez de en los tres casos elegidos a mano.
+		for (const anio of [2026, 2027]) {
+			for (let mes = 1; mes <= 12; mes++) {
+				const dias = cuadricula(mediodia(`${anio}-${String(mes).padStart(2, '0')}-01`), ZONA);
+				const etiqueta = `${anio}-${mes}`;
+
+				expect(dias.length % 7, etiqueta).toBe(0);
+				// Todos los días del mes están.
+				expect(dias.filter((d) => d.delMes).length, etiqueta).toBe(
+					new Date(Date.UTC(anio, mes, 0)).getUTCDate()
+				);
+				// Y la última fila tiene por lo menos uno del mes.
+				expect(dias.slice(-7).some((d) => d.delMes), etiqueta).toBe(true);
+				// La primera también: si no, sobraría una fila al principio.
+				expect(dias.slice(0, 7).some((d) => d.delMes), etiqueta).toBe(true);
+			}
 		}
-		// Y febrero de un bisiesto que arranca jueves, que es de los más cortos
-		// en filas.
-		expect(cuadricula(mediodia('2024-02-01'), ZONA)).toHaveLength(42);
 	});
 
 	test('arranca el lunes anterior al primero del mes', () => {
@@ -104,7 +132,7 @@ describe('cuadricula', () => {
 		// falta, y todo lo demás corrido.
 		for (const mes of ['2026-03-01', '2026-10-01']) {
 			const claves = cuadricula(mediodia(mes), 'Europe/Madrid').map((d) => d.clave);
-			expect(new Set(claves).size).toBe(42);
+			expect(new Set(claves).size).toBe(claves.length);
 		}
 	});
 });
@@ -142,8 +170,8 @@ describe('rangoDe', () => {
 		expect(desde).toBe(dias[0].fecha.toISOString());
 		// El final del último día, no su comienzo: si no, un evento del sábado a
 		// las tres de la tarde queda afuera.
-		expect(hasta).toBe('2026-10-12T00:00:00.000Z');
-		expect(dias[41].clave).toBe('2026-10-11');
+		expect(dias[dias.length - 1].clave).toBe('2026-10-04');
+		expect(hasta).toBe('2026-10-05T00:00:00.000Z');
 	});
 
 	test('el rango se corre con la zona', () => {
@@ -278,7 +306,7 @@ describe('porDia', () => {
 		expect(Date.now() - empezo).toBeLessThan(1000);
 		// Y lo que sí se ve, se ve: desde el 15 hasta el final de la cuadrícula.
 		expect(mapa.get('2026-09-15')).toHaveLength(1);
-		expect(mapa.get(MES[41].clave)).toHaveLength(1);
+		expect(mapa.get(MES[MES.length - 1].clave)).toHaveLength(1);
 	});
 
 	test('un evento que empieza antes de la cuadrícula se ve desde el borde', () => {

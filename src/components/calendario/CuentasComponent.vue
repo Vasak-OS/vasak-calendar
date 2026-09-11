@@ -1,18 +1,31 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import ZonaComponent from '@/components/calendario/ZonaComponent.vue';
 import type { Calendario, Cuenta } from '@/composables/use-calendario';
 
 defineProps<{
 	cuentas: Cuenta[];
 	calendarios: Calendario[];
 	avisos: string[];
+	zona: string;
+	zonaElegida: string;
+	zonaDelSistema: string;
+	zonaAjena: boolean;
 }>();
+
+const emit = defineEmits<(e: 'elegirZona', zona: string) => void>();
 
 const { t } = useI18n();
 </script>
 
 <template>
-  <aside class="flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-ui-border border-r p-3">
+  <!-- **El panel no desplaza; desplaza lo de adentro.** Con `overflow-y-auto`
+       acá, el menú del selector de zona quedaba recortado por el borde del
+       panel: un menú que se abre y se ve por la mitad. Además el selector queda
+       clavado abajo en vez de irse con el desplazamiento, que es donde se lo
+       busca. -->
+  <aside class="flex w-56 shrink-0 flex-col gap-4 border-ui-border border-r p-3">
+    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     <!-- Sin ninguna cuenta, lo que hace falta es decir **qué hacer**. Una lista
          vacía sin explicación se lee como una aplicación rota. -->
     <div v-if="cuentas.length === 0" class="flex flex-col gap-1">
@@ -64,6 +77,14 @@ const { t } = useI18n();
       <ul class="flex flex-col gap-1">
         <li v-for="aviso in avisos" :key="aviso" class="text-tx-muted text-xs">{{ aviso }}</li>
       </ul>
-    </section>
+      </section>
+    </div>
+
+    <ZonaComponent
+      :elegida="zonaElegida"
+      :del-sistema="zonaDelSistema"
+      :en-uso="zona"
+      :ajena="zonaAjena"
+      @elegir="emit('elegirZona', $event)" />
   </aside>
 </template>
