@@ -25,6 +25,8 @@ use base64::Engine;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::Serialize;
 
+use crate::zonas::{Zona, Zonas};
+
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Tope de lo que se lee de una respuesta.
@@ -149,15 +151,24 @@ pub fn texto_de(valor: &str) -> String {
 
 /// Interpreta una fecha de iCalendar.
 ///
-/// Tres formas: `20260915` (todo el día), `20260915T140000Z` (UTC) y
-/// `20260915T140000` con un `TZID` al lado (hora local de esa zona).
+/// Cuatro formas, y cada una quiere decir algo distinto:
 ///
-/// El tercer caso se trata como UTC **a propósito y con una deuda anotada**:
-/// resolver una zona horaria de verdad necesita la base de datos de zonas, y
-/// hacerlo mal correría los eventos de hora sin que nadie lo note. Mientras
-/// tanto, un evento con `TZID` puede aparecer corrido; lo que no puede es
-/// aparecer en el día equivocado por un error de parseo.
-pub fn fecha_de(valor: &str, parametros: &[String]) -> Option<(DateTime<Utc>, bool)> {
+/// - `20260915`, o con `VALUE=DATE` — **todo el día**. No tiene hora, así que no
+///   tiene zona: darle una la correría de día para quien esté en otra.
+/// - `20260915T140000Z` — **UTC**. Un instante, sin ambigüedad.
+/// - `20260915T140000` con `TZID=...` — las dos de la tarde **de esa zona**. Se
+///   resuelve con [`crate::zonas`], que es donde está explicado de dónde sale la
+///   zona y qué pasa con las dos horas raras del año.
+/// - `20260915T140000` a secas — **hora local flotante**: «las dos de donde
+///   estés». Se toma la zona de la sesión.
+///
+/// Las últimas dos se trataban como UTC, y eso quería decir que una reunión de
+/// las 14:00 en Buenos Aires se mostraba a las 11:00.
+pub fn fecha_de(
+    valor: &str,
+    parametros: &[String],
+    zonas: &Zonas,
+) -> Option<(DateTime<Utc>, bool)> {
     let es_dia_completo = parametros
         .iter()
         .any(|p| p.eq_ignore_ascii_case("VALUE=DATE"));
@@ -168,16 +179,41 @@ pub fn fecha_de(valor: &str, parametros: &[String]) -> Option<(DateTime<Utc>, bo
         return Some((Utc.from_utc_datetime(&momento), true));
     }
 
-    let sin_zona = valor.strip_suffix('Z').unwrap_or(valor);
-    let momento = NaiveDateTime::parse_from_str(sin_zona, "%Y%m%dT%H%M%S").ok()?;
-    Some((Utc.from_utc_datetime(&momento), false))
+    let local =
+        NaiveDateTime::parse_from_str(valor.strip_suffix('Z').unwrap_or(valor), "%Y%m%dT%H%M%S")
+            .ok()?;
+
+    // La `Z` manda sobre cualquier `TZID`: una fecha en UTC ya es un instante, y
+    // un `TZID` al lado es un archivo mal escrito, no otra interpretación.
+    let zona = if valor.ends_with('Z') {
+        Zona::Utc
+    } else {
+        match tzid_de(parametros) {
+            Some(tzid) => zonas.resolver(tzid),
+            None => Zona::Flotante,
+        }
+    };
+
+    zona.a_utc(local).map(|momento| (momento, false))
+}
+
+/// El `TZID` de los parámetros de una línea, si lo trae.
+fn tzid_de(parametros: &[String]) -> Option<&str> {
+    parametros.iter().find_map(|p| {
+        let (nombre, valor) = p.split_once('=')?;
+        nombre.trim().eq_ignore_ascii_case("TZID").then_some(valor)
+    })
 }
 
 /// Saca los eventos de un iCalendar.
 ///
 /// Sólo `VEVENT`: un calendario trae también tareas y notas, y mostrarlas como
 /// si fueran eventos llenaría el mes de cosas que no lo son.
+///
+/// Las zonas se leen **antes** y en una pasada aparte: un `VTIMEZONE` puede
+/// venir después del evento que lo usa, y el formato no fija el orden.
 pub fn eventos_de(ical: &str) -> Vec<Evento> {
+    let zonas = crate::zonas::tabla_de(ical);
     let mut eventos = Vec::new();
     let mut actual: Option<EventoCrudo> = None;
     // Cuántos componentes hay abiertos **dentro** del evento.
@@ -230,8 +266,8 @@ pub fn eventos_de(ical: &str) -> Vec<Evento> {
         match nombre.as_str() {
             "UID" => crudo.uid = Some(valor),
             "SUMMARY" => crudo.titulo = Some(texto_de(&valor)),
-            "DTSTART" => crudo.inicio = fecha_de(&valor, &parametros),
-            "DTEND" => crudo.fin = fecha_de(&valor, &parametros),
+            "DTSTART" => crudo.inicio = fecha_de(&valor, &parametros, &zonas),
+            "DTEND" => crudo.fin = fecha_de(&valor, &parametros, &zonas),
             "RRULE" => crudo.se_repite = true,
             _ => {}
         }
@@ -553,17 +589,18 @@ mod tests {
     /// día para quien esté en otra zona.
     #[test]
     fn una_fecha_sin_hora_es_de_dia_completo() {
-        let (momento, todo_el_dia) = fecha_de("20260915", &["VALUE=DATE".into()]).unwrap();
+        let (momento, todo_el_dia) =
+            fecha_de("20260915", &["VALUE=DATE".into()], &Zonas::default()).unwrap();
         assert!(todo_el_dia);
         assert_eq!(momento.to_rfc3339(), "2026-09-15T00:00:00+00:00");
 
         // Y también si no viene el parámetro: ocho dígitos ya son una fecha.
-        assert!(fecha_de("20260915", &[]).unwrap().1);
+        assert!(fecha_de("20260915", &[], &Zonas::default()).unwrap().1);
     }
 
     #[test]
     fn una_fecha_con_hora_no_es_de_dia_completo() {
-        let (momento, todo_el_dia) = fecha_de("20260915T140000Z", &[]).unwrap();
+        let (momento, todo_el_dia) = fecha_de("20260915T140000Z", &[], &Zonas::default()).unwrap();
         assert!(!todo_el_dia);
         assert_eq!(momento.to_rfc3339(), "2026-09-15T14:00:00+00:00");
     }
@@ -571,8 +608,92 @@ mod tests {
     #[test]
     fn una_fecha_que_no_se_entiende_no_se_inventa() {
         for basura in ["", "mañana", "2026-09-15", "20261301", "20260915T99"] {
-            assert_eq!(fecha_de(basura, &[]), None, "{basura:?}");
+            assert_eq!(fecha_de(basura, &[], &Zonas::default()), None, "{basura:?}");
         }
+    }
+
+    /// **El bug que este módulo tenía.** Una fecha con `TZID` se trataba como
+    /// UTC, así que una reunión de las dos de la tarde en Buenos Aires se
+    /// mostraba a las once de la mañana.
+    #[test]
+    fn una_fecha_con_tzid_no_es_utc() {
+        let (momento, todo_el_dia) = fecha_de(
+            "20260915T140000",
+            &["TZID=America/Argentina/Buenos_Aires".into()],
+            &Zonas::default(),
+        )
+        .unwrap();
+        assert!(!todo_el_dia);
+        assert_eq!(momento.to_rfc3339(), "2026-09-15T17:00:00+00:00");
+    }
+
+    /// El `TZID` entre comillas, que es como lo escribe un cliente cuando el
+    /// nombre tiene barras o espacios.
+    #[test]
+    fn el_tzid_entre_comillas_se_resuelve_igual() {
+        let (momento, _) = fecha_de(
+            "20260915T140000",
+            &[r#"TZID="America/Argentina/Buenos Aires""#.into()],
+            &Zonas::default(),
+        )
+        .unwrap();
+        assert_eq!(momento.to_rfc3339(), "2026-09-15T17:00:00+00:00");
+    }
+
+    /// Una `Z` es un instante y manda sobre cualquier `TZID` al lado: eso es un
+    /// archivo mal escrito, no otra interpretación.
+    #[test]
+    fn la_z_manda_sobre_el_tzid() {
+        let (momento, _) = fecha_de(
+            "20260915T140000Z",
+            &["TZID=Europe/Madrid".into()],
+            &Zonas::default(),
+        )
+        .unwrap();
+        assert_eq!(momento.to_rfc3339(), "2026-09-15T14:00:00+00:00");
+    }
+
+    /// Un evento entero con su `VTIMEZONE`, como lo manda Outlook: el `TZID` no
+    /// es un nombre de IANA y las reglas vienen en el mismo archivo.
+    #[test]
+    fn un_evento_con_su_propio_vtimezone_cae_a_la_hora_correcta() {
+        let ical = "BEGIN:VCALENDAR\r\n\
+            BEGIN:VTIMEZONE\r\n\
+            TZID:Romance Standard Time\r\n\
+            BEGIN:STANDARD\r\n\
+            DTSTART:16010101T030000\r\n\
+            TZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\n\
+            RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\r\n\
+            END:STANDARD\r\n\
+            BEGIN:DAYLIGHT\r\n\
+            DTSTART:16010101T020000\r\n\
+            TZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\n\
+            RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3\r\n\
+            END:DAYLIGHT\r\n\
+            END:VTIMEZONE\r\n\
+            BEGIN:VEVENT\r\nUID:abc\r\nSUMMARY:Reunión\r\n\
+            DTSTART;TZID=Romance Standard Time:20260715T090000\r\n\
+            DTEND;TZID=Romance Standard Time:20260715T100000\r\n\
+            END:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let eventos = eventos_de(ical);
+        assert_eq!(eventos.len(), 1);
+        // Julio es verano en Madrid: +2.
+        assert_eq!(eventos[0].inicio, "2026-07-15T07:00:00+00:00");
+        assert_eq!(eventos[0].fin, "2026-07-15T08:00:00+00:00");
+    }
+
+    /// Un evento de día completo sigue sin tener zona, aunque el archivo defina
+    /// una: darle una hora lo correría de día para quien esté en otra.
+    #[test]
+    fn un_evento_de_dia_completo_no_se_corre_de_dia() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r\n\
+            DTSTART;VALUE=DATE:20260915\r\nDTEND;VALUE=DATE:20260916\r\n\
+            END:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let eventos = eventos_de(ical);
+        assert!(eventos[0].todo_el_dia);
+        assert_eq!(eventos[0].inicio, "2026-09-15T00:00:00+00:00");
     }
 
     const UN_EVENTO: &str = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r\n\
