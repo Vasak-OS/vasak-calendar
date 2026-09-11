@@ -24,7 +24,7 @@ const { t } = useI18n();
        panel: un menú que se abre y se ve por la mitad. Además el selector queda
        clavado abajo en vez de irse con el desplazamiento, que es donde se lo
        busca. -->
-  <aside class="flex w-56 shrink-0 flex-col gap-4 border-ui-border border-r p-3">
+  <aside class="flex w-56 shrink-0 flex-col gap-4 rounded-corner border border-ui-border bg-ui-surface/45 p-3">
     <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     <!-- Sin ninguna cuenta, lo que hace falta es decir **qué hacer**. Una lista
          vacía sin explicación se lee como una aplicación rota. -->

@@ -127,7 +127,13 @@ function resumenSobrantes(cantidad: number): string {
        Lo que **todavía no** hace es moverse con las flechas: eso pide un
        `tabindex` móvil y sus manejadores de teclado, y no está escrito. Se
        recorre con Tab como cualquier otra cosa. -->
-  <div class="flex min-h-0 flex-1 flex-col" role="grid" :aria-label="t('app.nombre')">
+  <!-- `overflow-hidden` con las esquinas redondeadas: las celdas del borde
+       tienen sus propias líneas, y sin recortar se asoman por fuera de la
+       curva y la esquina se ve mordida. -->
+  <div
+    class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-corner border border-ui-border bg-ui-surface/45"
+    role="grid"
+    :aria-label="t('app.nombre')">
     <div class="grid grid-cols-7 border-ui-border border-b" role="row">
       <!-- Abreviado a la vista y entero para quien escucha: «lun» leído en voz
            alta no es una palabra. -->
@@ -161,8 +167,12 @@ function resumenSobrantes(cantidad: number): string {
         <div
           v-for="dia in semana"
           :key="dia.clave"
-          class="flex min-h-0 flex-col gap-0.5 overflow-hidden border-ui-border border-r border-b p-1 last:border-r-0"
+          class="flex min-h-0 flex-col gap-0.5 overflow-hidden border-ui-border border-r p-1 last:border-r-0"
           :class="{
+            // La línea de abajo la lleva cada fila menos la última: ahí el
+            // borde ya lo pone la superficie que contiene la cuadrícula, y las
+            // dos juntas se ven como una raya doble pegada a la esquina.
+            'border-b': indice < semanas.length - 1,
             // Los días del mes anterior y del siguiente se ven, porque son días
             // reales con eventos reales, pero apagados: si pesaran igual, no se
             // distinguiría dónde empieza el mes que se está mirando.
