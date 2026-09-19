@@ -17,6 +17,8 @@ import CalendarioView from '@/views/CalendarioView.vue';
 import { olvidarTodo } from './dobles';
 
 let vista: VueWrapper | null = null;
+/** Lo que cada llamada a `ranura()` dejó montado, para desmontarlo después. */
+const sueltos: VueWrapper[] = [];
 
 function abrir() {
 	vista = mount(CalendarioView);
@@ -24,6 +26,7 @@ function abrir() {
 }
 
 afterEach(() => {
+	for (const suelto of sueltos.splice(0)) suelto.unmount();
 	vista?.unmount();
 	vista = null;
 	olvidarTodo();
@@ -57,11 +60,17 @@ describe('lo que va en la barra', () => {
 	 * comprueba es larga —la vista se la pasa al layout, el layout al marco, el
 	 * marco a la barra— y basta con que uno de los tres no la reexponga para que
 	 * lo que se le ponga desaparezca sin ningún error.
+	 *
+	 * Lo que monta **no** cuelga de `vista`, así que no se va con ella: se anota
+	 * y el `afterEach` lo desmonta.
 	 */
 	function ranura(ventana: VueWrapper, nombre: string) {
 		const barra = ventana.findComponent(AppBar);
 		const dibujar = (barra.vm.$slots as Record<string, (() => unknown) | undefined>)[nombre];
-		return dibujar ? mount({ render: () => dibujar() }) : null;
+		if (!dibujar) return null;
+		const suelto = mount({ render: () => dibujar() });
+		sueltos.push(suelto);
+		return suelto;
 	}
 
 	test('el icono va en `identidad`', () => {
