@@ -56,15 +56,18 @@ onMounted(cargar);
 
 <template>
   <WindowAppLayout>
-    <template #barra>
-      <!-- El icono de la aplicación, a la izquierda de todo, como en el resto
-           del escritorio. -->
+    <!-- El icono de la aplicación, a la izquierda de todo, como en el resto
+         del escritorio. Va en `identidad` y no en la ranura del contenido:
+         cuando la barra queda a un costado, es la única parte que no se
+         desplaza con lo demás. -->
+    <template #identidad>
       <img :src="icono" class="h-6 w-6 shrink-0" :alt="t('app.nombre')" />
+    </template>
 
-      <!-- Lo que sigue se va contra los controles de la ventana, que es donde
-           está el botón de actualizar en el resto de las aplicaciones. -->
-      <span class="flex-1"></span>
-
+    <!-- El estado y el botón de actualizar, junto a los botones de la ventana,
+         que es donde están en el resto de las aplicaciones. El hueco que los
+         empujaba hasta ahí —un `span` con `flex-1`— lo pone la barra sola. -->
+    <template #acciones>
       <!-- El estado de carga se dice, no se insinúa con un icono girando: sin
            esto, un servidor lento y un mes vacío se ven igual. -->
       <span v-if="cargando" class="text-tx-muted text-xs" role="status">
