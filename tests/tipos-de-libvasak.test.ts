@@ -164,7 +164,7 @@ describe('los tipos de la librería', () => {
 			}
 		).version;
 
-		expect(Bun.semver.satisfies(instalada, '>=0.6.0')).toBe(true);
+		expect(Bun.semver.satisfies(instalada, '>=0.14.0')).toBe(true);
 	});
 
 	test('y se comprueban: los dos usos correctos pasan', async () => {
