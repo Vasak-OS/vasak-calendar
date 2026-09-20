@@ -10,22 +10,21 @@
  * arriba, abajo, a la izquierda o a la derecha según `window.barPosition` en
  * `~/.config/vasak/vasak.conf`.
  *
+ * Las etiquetas de los tres botones no se pasan: desde la 0.8 los controles las
+ * resuelven solos contra `ventana.minimizar`, `ventana.maximizar` y
+ * `ventana.cerrar` del catálogo de la aplicación, que son justo las que esto
+ * les estaba pasando. Repetirlas acá era dar la misma respuesta dos veces.
+ *
  * `centro` es el mes entre sus flechas, centrado respecto de la ventana entera
  * y no de lo que sobra entre el icono y los controles: entre columnas se corre
  * lo suficiente como para que se note, porque los tres botones ocupan más que
  * el icono. Con la barra a un costado el centrado cambia de eje solo.
  */
-import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { WindowFrame } from '@vasakgroup/vue-libvasak';
-
-const { t } = useI18n();
 </script>
 
 <template>
-  <WindowFrame
-    :minimize-label="t('ventana.minimizar')"
-    :maximize-label="t('ventana.maximizar')"
-    :close-label="t('ventana.cerrar')">
+  <WindowFrame>
     <template v-if="$slots.identidad" #identidad><slot name="identidad" /></template>
     <template v-if="$slots.barra" #barra><slot name="barra" /></template>
     <template v-if="$slots.barraCentro" #centro><slot name="barraCentro" /></template>

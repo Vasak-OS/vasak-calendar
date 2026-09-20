@@ -1,8 +1,7 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { type OpcionDeBusqueda, SearchSelect } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
-import SelectorBuscable from '@/components/comunes/SelectorBuscable.vue';
-import type { Opcion } from '@/tools/buscar';
 import { interpolar } from '@/tools/interpolar';
 import { zonasConocidas } from '@/tools/zona';
 
@@ -37,7 +36,7 @@ const { t } = useI18n();
  * Buscar sigue encontrando por el nombre entero: el `valor` de la opción es el
  * de IANA sin tocar, y `buscarOpciones` mira los tres campos.
  */
-const zonas = computed<Opcion[]>(() => [
+const zonas = computed<OpcionDeBusqueda[]>(() => [
 	{
 		valor: '',
 		etiqueta: t('calendario.zonaDelSistema'),
@@ -76,16 +75,16 @@ function legible(zona: string): string {
     <h2 class="font-medium text-tx-muted text-xs uppercase">
       {{ t('calendario.zonaEtiqueta') }}
     </h2>
-    <!-- Dibujado por la aplicación y no por el sistema: ver `SelectorBuscable`.
+    <!-- Dibujado por la aplicación y no por el sistema: ver `SearchSelect` de la librería.
          Hacia arriba porque esto vive al pie del panel, y hacia abajo el menú se
          saldría de la ventana. -->
-    <SelectorBuscable
+    <SearchSelect
       :model-value="props.elegida"
-      :opciones="zonas"
-      :etiqueta="t('calendario.zonaEtiqueta')"
-      :placeholder-busqueda="t('calendario.zonaBuscar')"
-      :texto-sin-resultados="t('calendario.zonaSinResultados')"
-      hacia-arriba
+      :options="zonas"
+      :label="t('calendario.zonaEtiqueta')"
+      :search-placeholder="t('calendario.zonaBuscar')"
+      :empty-text="t('calendario.zonaSinResultados')"
+      up
       @update:model-value="emit('elegir', $event)" />
 
     <!-- El nombre de la zona va **abajo y no adentro** del desplegable.

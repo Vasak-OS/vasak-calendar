@@ -46,7 +46,23 @@ describe('la ventana', () => {
 	test('con los tres botones', () => {
 		// El calendario es una ventana normal: se minimiza, se maximiza y se
 		// cierra.
-		expect(abrir().findComponent(WindowControls).findAll('button').length).toBe(3);
+		expect(abrir().findComponent(WindowControls).findAll('button')).toHaveLength(3);
+	});
+
+	test('y los tres con nombre, sin que esta ventana se lo pase', () => {
+		// El envoltorio les pasaba las tres etiquetas a mano. Desde la 0.8 los
+		// controles las resuelven solos contra el catálogo de la aplicación, y
+		// son las mismas tres claves: repetirlas era dar la misma respuesta dos
+		// veces. Lo que se comprueba es que al dejar de pasarlas **no se
+		// pierdan**, que es lo que no daría ningún error —un botón que sólo
+		// tiene un icono adentro se anuncia «botón» y nada más—.
+		const botones = abrir().findComponent(WindowControls).findAll('button');
+
+		expect(botones.map((b) => b.attributes('aria-label'))).toEqual([
+			'ventana.minimizar',
+			'ventana.maximizar',
+			'ventana.cerrar',
+		]);
 	});
 });
 
