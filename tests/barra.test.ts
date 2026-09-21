@@ -10,9 +10,10 @@
  * conectada no da ningún error: lo que se le ponga desaparece.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { AppBar, WindowControls, WindowFrame } from '@vasakgroup/vue-libvasak';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { AppBar, olvidarLosIconosDelTema, WindowControls, WindowFrame } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import CalendarioView from '@/views/CalendarioView.vue';
 import { olvidarTodo } from './dobles';
 
@@ -24,6 +25,24 @@ function abrir() {
 	vista = mount(CalendarioView);
 	return vista;
 }
+
+/**
+ * Deja que `ThemeIcon` resuelva.
+ *
+ * El icono se pide al montar y vuelve por promesa, así que hasta que no vuelve
+ * el componente dibuja el hueco del mismo tamaño y no una imagen. Sin esperar,
+ * buscar `img` no encuentra nada y la prueba falla por la razón equivocada.
+ */
+async function asentar(vueltas = 6) {
+	for (let i = 0; i < vueltas; i++) await nextTick();
+}
+
+beforeEach(() => {
+	// La memoria de iconos de la librería vive en su módulo y se comparte entre
+	// archivos de prueba: sin esto, el primero que pida un icono con los dobles
+	// sin preparar deja guardado que no hay ninguno.
+	olvidarLosIconosDelTema();
+});
 
 afterEach(() => {
 	for (const suelto of sueltos.splice(0)) suelto.unmount();
@@ -89,14 +108,26 @@ describe('lo que va en la barra', () => {
 		return suelto;
 	}
 
-	test('el icono va en `identidad`', () => {
+	test('el icono va en `identidad`', async () => {
 		// En la ranura del contenido se desplazaría con lo demás cuando la
 		// barra queda a un costado y la lista no entra: `identidad` es la única
 		// que no scrollea.
 		const dentro = ranura(abrir(), 'identidad');
+		await asentar();
 
 		expect(dentro).not.toBeNull();
 		expect(dentro?.find('img').attributes('alt')).toBe('app.nombre');
+	});
+
+	test('y es el de la aplicación, a color', async () => {
+		// A color y no el símbolo: es la identidad de la ventana, como en el
+		// resto del escritorio. El doble devuelve `icono:` o `simbolo:` según
+		// cuál se haya pedido, que es lo que lo distingue —pedir el símbolo no
+		// falla, dibuja otra cosa—.
+		const dentro = ranura(abrir(), 'identidad');
+		await asentar();
+
+		expect(dentro?.find('img').attributes('src')).toBe('icono:calendar');
 	});
 
 	test('el mes va al medio de la ventana entera y no entre columnas', () => {

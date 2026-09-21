@@ -52,12 +52,20 @@ export async function listen(_nombre: string, _manejador: () => unknown) {
 	return () => {};
 }
 
-export async function getIconSource(_nombre: string) {
-	return '';
+/**
+ * Los iconos del tema, devolviendo **qué nombre** se pidió.
+ *
+ * Devolvían la cadena vacía, y con eso `ThemeIcon` no dibuja ninguna imagen
+ * —pone el hueco del mismo tamaño para que la fila no salte—, así que una
+ * prueba que busque `img` no encuentra nada. Con la ruta adentro, además, se
+ * puede comprobar **cuál** icono se pidió y no sólo que haya uno.
+ */
+export async function getIconSource(nombre: string) {
+	return `icono:${nombre}`;
 }
 
-export async function getSymbolSource(_nombre: string) {
-	return '';
+export async function getSymbolSource(nombre: string) {
+	return `simbolo:${nombre}`;
 }
 
 export function olvidarTodo() {

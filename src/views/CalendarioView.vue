@@ -1,10 +1,10 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
+import { ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted } from 'vue';
 import CuentasComponent from '@/components/calendario/CuentasComponent.vue';
 import MesComponent from '@/components/calendario/MesComponent.vue';
 import { useCalendario } from '@/composables/use-calendario';
-import { useReactiveIcons } from '@/composables/useReactiveIcon';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 
 const { t, locale } = useI18n();
@@ -26,15 +26,6 @@ const {
 	mesSiguiente,
 	irAHoy,
 } = useCalendario();
-
-const { anterior, siguiente, actualizar, icono } = useReactiveIcons({
-	anterior: 'go-previous',
-	siguiente: 'go-next',
-	actualizar: 'view-refresh',
-	// El icono de la aplicación, no un símbolo: es la identidad de la ventana y
-	// va a color, como en el resto del escritorio.
-	icono: { name: 'calendar', type: 'icon' },
-});
 
 /**
  * «septiembre de 2026», en el idioma de la sesión y sin traducirlo a mano.
@@ -61,7 +52,10 @@ onMounted(cargar);
          cuando la barra queda a un costado, es la única parte que no se
          desplaza con lo demás. -->
     <template #identidad>
-      <img :src="icono" class="h-6 w-6 shrink-0" :alt="t('app.nombre')" />
+      <!-- El icono de la aplicación, no un símbolo: es la identidad de la
+           ventana y va a color, como en el resto del escritorio. `icon` es lo
+           que `ThemeIcon` trae por omisión. -->
+      <ThemeIcon name="calendar" :size="24" :alt="t('app.nombre')" />
     </template>
 
     <!-- El estado y el botón de actualizar, junto a los botones de la ventana,
@@ -80,7 +74,7 @@ onMounted(cargar);
         :title="t('calendario.actualizar')"
         :disabled="cargando"
         @click="cargar()">
-        <img :src="actualizar" class="h-6 w-6" alt="" />
+        <ThemeIcon name="view-refresh" type="symbol" :size="24" />
       </button>
     </template>
 
@@ -96,7 +90,7 @@ onMounted(cargar);
           class="rounded-corner p-1 hover:bg-ui-surface"
           :aria-label="t('calendario.mesAnterior')"
           @click="mesAnterior()">
-          <img :src="anterior" class="h-5 w-5" alt="" />
+          <ThemeIcon name="go-previous" type="symbol" :size="20" />
         </button>
         <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
              único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
@@ -114,7 +108,7 @@ onMounted(cargar);
           class="rounded-corner p-1 hover:bg-ui-surface"
           :aria-label="t('calendario.mesSiguiente')"
           @click="mesSiguiente()">
-          <img :src="siguiente" class="h-5 w-5" alt="" />
+          <ThemeIcon name="go-next" type="symbol" :size="20" />
         </button>
       </div>
 
