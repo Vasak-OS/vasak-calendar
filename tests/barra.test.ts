@@ -10,9 +10,10 @@
  * conectada no da ningún error: lo que se le ponga desaparece.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { AppBar, WindowControls, WindowFrame } from '@vasakgroup/vue-libvasak';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { AppBar, olvidarLosIconosDelTema, WindowControls, WindowFrame } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import CalendarioView from '@/views/CalendarioView.vue';
 import { olvidarTodo } from './dobles';
 
@@ -25,11 +26,41 @@ function abrir() {
 	return vista;
 }
 
+/**
+ * Deja que `ThemeIcon` resuelva.
+ *
+ * El icono se pide al montar y vuelve por promesa, así que hasta que no vuelve
+ * el componente dibuja el hueco del mismo tamaño y no una imagen. Sin esperar,
+ * buscar `img` no encuentra nada y la prueba falla por la razón equivocada.
+ */
+async function asentar(vueltas = 6) {
+	for (let i = 0; i < vueltas; i++) await nextTick();
+}
+
+/**
+ * La memoria de iconos de la librería, vaciada de los dos lados.
+ *
+ * Vive en su módulo y el módulo se comparte entre archivos de prueba, así que
+ * lo que queda guardado acá lo ve el archivo que corra después. El `beforeEach`
+ * protege a este archivo de lo que dejó otro; el `afterEach` protege a los
+ * demás de lo que deja éste.
+ *
+ * Hoy los dobles devuelven siempre lo mismo para un nombre —`icono:calendar` y
+ * nada más—, así que una entrada vieja no puede mentir. Va igual: el día que
+ * alguien pueda configurar qué devuelve el tema de mentira, esa entrada pasa a
+ * ser un valor equivocado que sobrevive a la prueba que lo puso, y eso no falla
+ * donde se escribió sino en el archivo siguiente. Lo marcó CodeRabbit.
+ */
+beforeEach(() => {
+	olvidarLosIconosDelTema();
+});
+
 afterEach(() => {
 	for (const suelto of sueltos.splice(0)) suelto.unmount();
 	vista?.unmount();
 	vista = null;
 	olvidarTodo();
+	olvidarLosIconosDelTema();
 });
 
 describe('la ventana', () => {
@@ -89,14 +120,26 @@ describe('lo que va en la barra', () => {
 		return suelto;
 	}
 
-	test('el icono va en `identidad`', () => {
+	test('el icono va en `identidad`', async () => {
 		// En la ranura del contenido se desplazaría con lo demás cuando la
 		// barra queda a un costado y la lista no entra: `identidad` es la única
 		// que no scrollea.
 		const dentro = ranura(abrir(), 'identidad');
+		await asentar();
 
 		expect(dentro).not.toBeNull();
 		expect(dentro?.find('img').attributes('alt')).toBe('app.nombre');
+	});
+
+	test('y es el de la aplicación, a color', async () => {
+		// A color y no el símbolo: es la identidad de la ventana, como en el
+		// resto del escritorio. El doble devuelve `icono:` o `simbolo:` según
+		// cuál se haya pedido, que es lo que lo distingue —pedir el símbolo no
+		// falla, dibuja otra cosa—.
+		const dentro = ranura(abrir(), 'identidad');
+		await asentar();
+
+		expect(dentro?.find('img').attributes('src')).toBe('icono:calendar');
 	});
 
 	test('el mes va al medio de la ventana entera y no entre columnas', () => {
