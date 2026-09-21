@@ -37,10 +37,21 @@ async function asentar(vueltas = 6) {
 	for (let i = 0; i < vueltas; i++) await nextTick();
 }
 
+/**
+ * La memoria de iconos de la librería, vaciada de los dos lados.
+ *
+ * Vive en su módulo y el módulo se comparte entre archivos de prueba, así que
+ * lo que queda guardado acá lo ve el archivo que corra después. El `beforeEach`
+ * protege a este archivo de lo que dejó otro; el `afterEach` protege a los
+ * demás de lo que deja éste.
+ *
+ * Hoy los dobles devuelven siempre lo mismo para un nombre —`icono:calendar` y
+ * nada más—, así que una entrada vieja no puede mentir. Va igual: el día que
+ * alguien pueda configurar qué devuelve el tema de mentira, esa entrada pasa a
+ * ser un valor equivocado que sobrevive a la prueba que lo puso, y eso no falla
+ * donde se escribió sino en el archivo siguiente. Lo marcó CodeRabbit.
+ */
 beforeEach(() => {
-	// La memoria de iconos de la librería vive en su módulo y se comparte entre
-	// archivos de prueba: sin esto, el primero que pida un icono con los dobles
-	// sin preparar deja guardado que no hay ninguno.
 	olvidarLosIconosDelTema();
 });
 
@@ -49,6 +60,7 @@ afterEach(() => {
 	vista?.unmount();
 	vista = null;
 	olvidarTodo();
+	olvidarLosIconosDelTema();
 });
 
 describe('la ventana', () => {
