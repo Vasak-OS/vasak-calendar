@@ -142,17 +142,43 @@ describe('lo que va en la barra', () => {
 		expect(dentro?.find('img').attributes('src')).toBe('icono:calendar');
 	});
 
-	test('el mes va al medio de la ventana entera y no entre columnas', () => {
-		// Centrado entre el icono y los tres controles queda centrado respecto
-		// de lo que sobra, y los controles ocupan bastante más que el icono: se
-		// corre lo suficiente como para que se note.
-		const ventana = abrir();
-		const anterior = ventana.find('[aria-label="calendario.mesAnterior"]');
+	test('el mes va en el contenido de la barra, que es lo único que crece', () => {
+		// Y no en `centro`, que centra respecto de la ventana entera: con el
+		// icono de un lado y el estado, actualizar y los tres controles del
+		// otro, el medio de la ventana no es el medio del hueco.
+		const dentro = ranura(abrir(), 'default');
 
-		expect(anterior.exists()).toBe(true);
-		const envoltorio = anterior.element.closest('.absolute') as HTMLElement | null;
-		expect(envoltorio).not.toBeNull();
-		expect(envoltorio?.className).toContain('left-1/2');
+		expect(dentro).not.toBeNull();
+		expect(dentro?.find('[aria-label="calendario.mesAnterior"]').exists()).toBe(true);
+	});
+
+	test('y ya no queda nada en `centro`', () => {
+		// La ranura sigue existiendo en el marco, y llenar las dos pondría dos
+		// barras: la de `centro` va encima, así que se verían las dos a la vez y
+		// superpuestas.
+		expect(ranura(abrir(), 'centro')).toBeNull();
+	});
+
+	test('centrado en el hueco, con márgenes automáticos', () => {
+		// `m-auto` reparte lo que sobra del contenedor a los dos lados. Sin él
+		// el grupo se pega al principio de la barra: el contenedor es flexible
+		// y los hijos no se centran solos.
+		//
+		// En los dos ejes y no sólo el horizontal: con la barra a un costado el
+		// hueco es vertical, y el margen automático centra en el eje que
+		// corresponda sin que haya que preguntar cuál es.
+		const dentro = ranura(abrir(), 'default');
+
+		expect(dentro?.find('div').classes()).toContain('m-auto');
+	});
+
+	test('y «Hoy» se centra junto al mes y no aparte', () => {
+		// Son una sola cosa para el ojo. Con el botón fuera del envoltorio, lo
+		// centrado sería el mes solo y «Hoy» quedaría colgando de un lado.
+		const dentro = ranura(abrir(), 'default');
+		const envoltorio = dentro?.find('.m-auto');
+
+		expect(envoltorio?.text()).toContain('calendario.hoy');
 	});
 
 	test('actualizar va en `acciones`, que es lo pegado a los botones', () => {
