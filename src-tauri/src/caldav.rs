@@ -25,6 +25,7 @@ use base64::Engine;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::Serialize;
 
+use crate::cuentas::{AuthKind, Credencial};
 use crate::zonas::{Zona, Zonas};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -272,7 +273,9 @@ pub fn eventos_de(ical: &str) -> Vec<Evento> {
         if anidado > 0 {
             continue;
         }
-        let Some(crudo) = actual.as_mut() else { continue };
+        let Some(crudo) = actual.as_mut() else {
+            continue;
+        };
 
         match nombre.as_str() {
             "UID" => crudo.uid = Some(valor),
@@ -314,10 +317,11 @@ impl EventoCrudo {
         // Sin fin, dura lo que el estándar dice: un día si es de día completo, y
         // nada si tiene hora. Inventar una hora de fin mostraría una barra que
         // no corresponde.
-        let fin = self
-            .fin
-            .map(|(f, _)| f)
-            .unwrap_or(if todo_el_dia { inicio + chrono::Duration::days(1) } else { inicio });
+        let fin = self.fin.map(|(f, _)| f).unwrap_or(if todo_el_dia {
+            inicio + chrono::Duration::days(1)
+        } else {
+            inicio
+        });
 
         Some(Evento {
             uid: self.uid.unwrap_or_default(),
@@ -330,7 +334,11 @@ impl EventoCrudo {
             se_repite: self.se_repite,
             // Un evento de día completo no tiene hora, así que no tiene zona,
             // aunque el archivo le haya puesto una.
-            zona: if todo_el_dia { String::new() } else { self.zona },
+            zona: if todo_el_dia {
+                String::new()
+            } else {
+                self.zona
+            },
         })
     }
 }
@@ -403,7 +411,11 @@ pub fn calendarios_de(xml: &str, base: &str) -> Vec<Calendario> {
                 url,
                 // Un calendario sin nombre igual se muestra: es donde puede estar
                 // el evento que la persona busca.
-                nombre: if nombre.is_empty() { "Calendario".into() } else { nombre },
+                nombre: if nombre.is_empty() {
+                    "Calendario".into()
+                } else {
+                    nombre
+                },
                 color,
             })
         })
@@ -427,11 +439,21 @@ pub fn ical_de_respuesta(xml: &str) -> Vec<String> {
 // La parte que habla por la red
 // ---------------------------------------------------------------------------
 
-fn cabecera_basica(usuario: &str, secreto: &str) -> String {
-    format!(
-        "Basic {}",
-        base64::engine::general_purpose::STANDARD.encode(format!("{usuario}:{secreto}"))
-    )
+/// La cabecera `Authorization` que le corresponde a esta cuenta.
+///
+/// `Basic` para una contraseña y `Bearer` para un token. No es una preferencia:
+/// Google contesta 401 a cualquier `Basic`, y un servidor que espera contraseña
+/// no entiende un `Bearer`. Cuál va lo decide lo que guardó el servicio de
+/// cuentas, no el proveedor — ver `cuentas::AuthKind`.
+fn cabecera_de(credencial: &Credencial) -> String {
+    match credencial.auth {
+        AuthKind::Password => format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD
+                .encode(format!("{}:{}", credencial.usuario, credencial.secreto))
+        ),
+        AuthKind::Token => format!("Bearer {}", credencial.secreto),
+    }
 }
 
 fn cliente() -> Result<reqwest::Client, String> {
@@ -482,7 +504,9 @@ async fn cuerpo_con_tope(mut respuesta: reqwest::Response) -> Result<String, Str
 }
 
 /// Los calendarios que hay en la carpeta de la persona.
-pub async fn calendarios(credencial: &crate::cuentas::Credencial) -> Result<Vec<Calendario>, String> {
+pub async fn calendarios(
+    credencial: &crate::cuentas::Credencial,
+) -> Result<Vec<Calendario>, String> {
     let cuerpo = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="{NS_CALDAV}" xmlns:a="{NS_APPLE}">
@@ -492,7 +516,7 @@ pub async fn calendarios(credencial: &crate::cuentas::Credencial) -> Result<Vec<
 
     let respuesta = cliente()?
         .request(metodo("PROPFIND"), &credencial.home)
-        .header("Authorization", cabecera_basica(&credencial.usuario, &credencial.secreto))
+        .header("Authorization", cabecera_de(credencial))
         // 1: la carpeta y lo que hay dentro. Con 0 sólo vendría la carpeta, que
         // es justo lo que no interesa.
         .header("Depth", "1")
@@ -515,12 +539,15 @@ pub async fn eventos(
 ) -> Result<Vec<Evento>, String> {
     let respuesta = cliente()?
         .request(metodo("REPORT"), calendario)
-        .header("Authorization", cabecera_basica(&credencial.usuario, &credencial.secreto))
+        .header("Authorization", cabecera_de(credencial))
         // 1: los eventos de este calendario. El estándar lo pide para una
         // consulta de calendario, y hay servidores que sin esto devuelven vacío.
         .header("Depth", "1")
         .header("Content-Type", "application/xml; charset=utf-8")
-        .body(consulta_de_eventos(&momento_caldav(desde), &momento_caldav(hasta)))
+        .body(consulta_de_eventos(
+            &momento_caldav(desde),
+            &momento_caldav(hasta),
+        ))
         .send()
         .await
         .map_err(|e| format!("no se pudieron pedir los eventos: {e}"))?;
@@ -539,6 +566,48 @@ fn metodo(nombre: &str) -> reqwest::Method {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn credencial(auth: AuthKind) -> Credencial {
+        Credencial {
+            home: "https://servidor.ejemplo.com/dav/".into(),
+            usuario: "ana@ejemplo.com".into(),
+            secreto: "el-secreto".into(),
+            auth,
+        }
+    }
+
+    /// Una contraseña va en `Basic`, con el usuario delante.
+    #[test]
+    fn la_contrasena_viaja_en_basic() {
+        let cabecera = cabecera_de(&credencial(AuthKind::Password));
+
+        assert!(cabecera.starts_with("Basic "), "{cabecera}");
+        // Y con el usuario adentro, que es lo que distingue a `Basic` de mandar
+        // el secreto solo.
+        let codificado =
+            base64::engine::general_purpose::STANDARD.encode("ana@ejemplo.com:el-secreto");
+        assert_eq!(cabecera, format!("Basic {codificado}"));
+    }
+
+    /// Un token va en `Bearer` y **sin el usuario**: Google contesta 401 a
+    /// cualquier `Basic`, y el rechazo parece de credenciales.
+    #[test]
+    fn el_token_viaja_en_bearer() {
+        let cabecera = cabecera_de(&credencial(AuthKind::Token));
+
+        assert_eq!(cabecera, "Bearer el-secreto");
+    }
+
+    /// El secreto nunca se codifica en base64 cuando es un token: eso es lo que
+    /// hacía que Google lo rechazara, y el modo de fallo es silencioso porque
+    /// una cabecera mal armada se ve igual que una bien armada.
+    #[test]
+    fn las_dos_formas_no_se_parecen() {
+        let con_clave = cabecera_de(&credencial(AuthKind::Password));
+        let con_token = cabecera_de(&credencial(AuthKind::Token));
+
+        assert_ne!(con_clave, con_token);
+    }
 
     /// El formato corta las líneas largas y sigue en la siguiente con un espacio
     /// adelante. Sin volver a juntarlas, un título largo aparece cortado a la
@@ -577,7 +646,8 @@ mod tests {
     #[test]
     fn un_dos_puntos_entre_comillas_no_corta() {
         let (nombre, parametros, valor) =
-            partir_linea(r#"DTSTART;TZID="America/Argentina/Buenos Aires":20260915T140000"#).unwrap();
+            partir_linea(r#"DTSTART;TZID="America/Argentina/Buenos Aires":20260915T140000"#)
+                .unwrap();
         assert_eq!(nombre, "DTSTART");
         assert_eq!(valor, "20260915T140000");
         assert!(parametros[0].contains("America"));
@@ -868,7 +938,13 @@ mod tests {
     /// que escribió cualquiera.
     #[test]
     fn lo_que_no_es_un_calendario_no_da_eventos() {
-        for basura in ["", "no es un calendario", "BEGIN:VEVENT", "END:VEVENT\r\n", ":::"] {
+        for basura in [
+            "",
+            "no es un calendario",
+            "BEGIN:VEVENT",
+            "END:VEVENT\r\n",
+            ":::",
+        ] {
             assert!(eventos_de(basura).is_empty(), "{basura:?}");
         }
     }
@@ -894,7 +970,8 @@ mod tests {
     /// entradas que al abrirlas no tienen nada.
     #[test]
     fn solo_se_listan_las_colecciones_que_son_calendarios() {
-        let calendarios = calendarios_de(CALENDARIOS, "https://nube.ejemplo.com/dav/calendars/ana/");
+        let calendarios =
+            calendarios_de(CALENDARIOS, "https://nube.ejemplo.com/dav/calendars/ana/");
 
         assert_eq!(calendarios.len(), 1);
         assert_eq!(calendarios[0].nombre, "Personal");
@@ -931,7 +1008,13 @@ mod tests {
         assert_eq!(momento_caldav(momento), "20260915T143000Z");
 
         let consulta = consulta_de_eventos("20260901T000000Z", "20261001T000000Z");
-        assert!(consulta.contains(r#"start="20260901T000000Z""#), "{consulta}");
-        assert!(roxmltree::Document::parse(&consulta).is_ok(), "no es XML válido");
+        assert!(
+            consulta.contains(r#"start="20260901T000000Z""#),
+            "{consulta}"
+        );
+        assert!(
+            roxmltree::Document::parse(&consulta).is_ok(),
+            "no es XML válido"
+        );
     }
 }
