@@ -78,46 +78,61 @@ onMounted(cargar);
       </button>
     </template>
 
-    <!-- Centrado en la barra entera, no en lo que sobra entre el icono y los
-         controles de la ventana. -->
-    <template #barraCentro>
-      <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
-           ir atrás a la izquierda de lo que se está mirando y la de ir adelante
-           a la derecha. -->
-      <div class="flex items-center gap-1">
+    <!-- **Centrado en el hueco que queda**, no en la ventana entera. Va en el
+         contenido de la barra —la única ranura que crece— con `m-auto`, que en
+         un contenedor flexible reparte lo que sobra a los dos lados. Estaba en
+         `centro`, que centra respecto de la ventana: con el icono de un lado y
+         el estado, el botón de actualizar y los tres controles del otro, el
+         medio de la ventana no es el medio del hueco, y el grupo quedaba
+         corrido a la derecha con la mitad izquierda de la barra vacía.
+
+         `m-auto` y no `mx-auto` porque la barra también puede ir a un costado:
+         ahí el eje del hueco es el vertical, y el margen automático en los dos
+         ejes centra en el que corresponda sin preguntar cuál es.
+
+         El mes y «Hoy» van dentro del mismo envoltorio, así que lo que se
+         centra es el conjunto: son una sola cosa para el ojo, y centrar el mes
+         solo dejaría al botón colgando de un lado. -->
+    <template #barra>
+      <div class="m-auto flex items-center gap-2">
+        <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
+             ir atrás a la izquierda de lo que se está mirando y la de ir adelante
+             a la derecha. -->
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="rounded-corner p-1 hover:bg-ui-surface"
+            :aria-label="t('calendario.mesAnterior')"
+            @click="mesAnterior()">
+            <ThemeIcon name="go-previous" type="symbol" :size="20" />
+          </button>
+          <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
+               único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
+               otra pista. -->
+          <!-- `first-letter` y no `capitalize`: lo segundo sube **cada** palabra
+               y el título salía «Septiembre De 2026». En español sólo va la
+               primera, y el nombre del mes lo escribe `Intl` en minúscula. -->
+          <h1
+            class="min-w-44 text-center font-title text-base first-letter:uppercase"
+            aria-live="polite">
+            {{ titulo }}
+          </h1>
+          <button
+            type="button"
+            class="rounded-corner p-1 hover:bg-ui-surface"
+            :aria-label="t('calendario.mesSiguiente')"
+            @click="mesSiguiente()">
+            <ThemeIcon name="go-next" type="symbol" :size="20" />
+          </button>
+        </div>
+
         <button
           type="button"
-          class="rounded-corner p-1 hover:bg-ui-surface"
-          :aria-label="t('calendario.mesAnterior')"
-          @click="mesAnterior()">
-          <ThemeIcon name="go-previous" type="symbol" :size="20" />
-        </button>
-        <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
-             único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
-             otra pista. -->
-        <!-- `first-letter` y no `capitalize`: lo segundo sube **cada** palabra
-             y el título salía «Septiembre De 2026». En español sólo va la
-             primera, y el nombre del mes lo escribe `Intl` en minúscula. -->
-        <h1
-          class="min-w-44 text-center font-title text-base first-letter:uppercase"
-          aria-live="polite">
-          {{ titulo }}
-        </h1>
-        <button
-          type="button"
-          class="rounded-corner p-1 hover:bg-ui-surface"
-          :aria-label="t('calendario.mesSiguiente')"
-          @click="mesSiguiente()">
-          <ThemeIcon name="go-next" type="symbol" :size="20" />
+          class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
+          @click="irAHoy()">
+          {{ t('calendario.hoy') }}
         </button>
       </div>
-
-      <button
-        type="button"
-        class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
-        @click="irAHoy()">
-        {{ t('calendario.hoy') }}
-      </button>
     </template>
 
     <!-- Las secciones separadas por aire y no por líneas: cada una es una
