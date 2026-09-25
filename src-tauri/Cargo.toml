@@ -1,6 +1,6 @@
 [package]
 name = "vasak-calendar"
-version = "0.6.2"
+version = "0.6.3"
 description = "El calendario de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
