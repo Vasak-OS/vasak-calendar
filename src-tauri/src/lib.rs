@@ -6,10 +6,11 @@
 mod caldav;
 mod comandos;
 mod cuentas;
+mod dav;
 mod locales;
 mod reloj;
-mod zonas;
 mod ventana;
+mod zonas;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
