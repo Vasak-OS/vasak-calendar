@@ -18,23 +18,43 @@
 //! excepciones, fechas que se corren, zonas horarias que cambian en el medio— y
 //! hacerlo mal es peor que no hacerlo: un calendario que muestra una reunión el
 //! día equivocado es peor que uno que no la muestra.
+//!
+//! ── Qué se le cree al servidor ──────────────────────────────────────────────
+//!
+//! Lo que contesta lo escribió cualquiera, y esta aplicación lleva la credencial
+//! de la cuenta. Por eso **cada dirección que el servidor manda se resuelve
+//! contra la de la cuenta y se rechaza si es de otro origen**, y el cliente
+//! habla **sólo `https`** y **sin redirecciones**: una dirección ajena se queda
+//! con la credencial, y una redirección también. Y lo que llega pasa por los
+//! topes de `dav::Limits` antes de armarse: `roxmltree` baja de forma recursiva
+//! —un `multistatus` con doscientos mil niveles de anidado **aborta la
+//! aplicación**—, y con miles de espacios de nombres o de atributos se traba.
+//! Todo eso, y el rechazo de otras direcciones, está en [`crate::dav`].
 
 use std::time::Duration;
 
 use base64::Engine;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use reqwest::Url;
 use serde::Serialize;
 
 use crate::cuentas::{AuthKind, Credencial};
+use crate::dav::{self, DavError, Limits};
 use crate::zonas::{Zona, Zonas};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Los topes de esta aplicación, con los mismos números que usa el sincronizador
+/// de `vasak-accounts` para las mismas respuestas de DAV.
+const LIMITES: Limits = Limits::DEFAULT;
 
 /// Tope de lo que se lee de una respuesta.
 ///
 /// Un calendario de años puede ser grande, pero no ilimitado: sin tope, un
 /// servidor que devuelve basura hace crecer la memoria de la ventana sin freno.
-const MAX_CUERPO: usize = 8 * 1024 * 1024;
+/// Es [`Limits::max_body_bytes`], y vive en `dav` porque el tope no es de este
+/// protocolo sino de HTTP.
+const MAX_CUERPO: usize = Limits::DEFAULT.max_body_bytes;
 
 const NS_DAV: &str = "DAV:";
 const NS_CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
@@ -366,12 +386,22 @@ pub fn momento_caldav(momento: DateTime<Utc>) -> String {
 }
 
 /// Lee los calendarios de una respuesta `PROPFIND`.
-pub fn calendarios_de(xml: &str, base: &str) -> Vec<Calendario> {
-    let Ok(documento) = roxmltree::Document::parse(xml) else {
-        return Vec::new();
-    };
+///
+/// **Un XML que no se entiende es un error, no una lista vacía.** Con una lista
+/// vacía, una conexión que se cortó o un servidor que devolvió una página de
+/// error se ven igual que «esta cuenta no tiene calendarios», y la ventana se
+/// queda vacía sin decir por qué.
+///
+/// Y un `href` **de otro origen se descarta** sin más: es un calendario que no
+/// se puede pedir sin mandarle la credencial de la cuenta a otro servidor, y
+/// eso no es un error de la cuenta sino algo que el servidor dijo. Los demás se
+/// listan, que es lo que importa: un calendario que no se puede pedir no puede
+/// tapar a los que sí.
+pub fn calendarios_de(xml: &str, base: &Url) -> Result<Vec<Calendario>, DavError> {
+    let documento = dav::parse_xml(xml, &LIMITES)?;
+    let base = base.clone();
 
-    documento
+    Ok(documento
         .descendants()
         .filter(|n| n.has_tag_name((NS_DAV, "response")))
         .filter_map(|respuesta| {
@@ -390,7 +420,23 @@ pub fn calendarios_de(xml: &str, base: &str) -> Vec<Calendario> {
                 .find(|n| n.has_tag_name((NS_DAV, "href")))?
                 .text()?
                 .trim();
-            let url = reqwest::Url::parse(base).ok()?.join(href).ok()?.to_string();
+            // La dirección se **resuelve y se compara**, no se pega: un `href`
+            // de otro servidor —o con usuario y contraseña adentro, o de más
+            // de 2 KiB— no sale. Antes se resolvía con `Url::join` y nada más,
+            // y el `calendario.url` que salía de acá se lo mandaba después la
+            // cabecera de autenticación.
+            //
+            // `resolve_href` sólo puede rechazar por `ForeignOrigin`, así que no
+            // hay un motivo que distinguir acá. El aviso lo recibe quien lo ve:
+            // si se abre un calendario que no llegó a listarse, `eventos` le
+            // contesta el texto fijo de `ForeignOrigin`, que es lo que la
+            // ventana muestra en «fallos». No hay diario en esta capa —el
+            // diario del sistema es un plugin de Tauri y acá no hay ventana—,
+            // y un calendario que no se lista es lo que hay que ver.
+            let Ok(url) = dav::resolve_href(&base, href) else {
+                return None;
+            };
+            let url = url.to_string();
 
             let nombre = respuesta
                 .descendants()
@@ -419,20 +465,22 @@ pub fn calendarios_de(xml: &str, base: &str) -> Vec<Calendario> {
                 color,
             })
         })
-        .collect()
+        .collect())
 }
 
 /// Saca los bloques de iCalendar de una respuesta `REPORT`.
-pub fn ical_de_respuesta(xml: &str) -> Vec<String> {
-    let Ok(documento) = roxmltree::Document::parse(xml) else {
-        return Vec::new();
-    };
-    documento
+///
+/// Como [`calendarios_de`], un XML que no se entiende es un error y no una lista
+/// vacía: sin eventos y sin calendarios a los que pertenecen, la ventana queda en
+/// blanco sin decir si no hay nada o si el servidor no se hizo entender.
+pub fn ical_de_respuesta(xml: &str) -> Result<Vec<String>, DavError> {
+    let documento = dav::parse_xml(xml, &LIMITES)?;
+    Ok(documento
         .descendants()
         .filter(|n| n.has_tag_name((NS_CALDAV, "calendar-data")))
         .filter_map(|n| n.text())
         .map(str::to_string)
-        .collect()
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -456,32 +504,44 @@ fn cabecera_de(credencial: &Credencial) -> String {
     }
 }
 
+/// El cliente HTTP de esta aplicación: sólo `https` y sin redirecciones.
+///
+/// Va por [`dav::client`] y no en línea, para que las dos cosas que no se
+/// negocian —que la credencial no viaje en claro y que no se siga a otro
+/// servidor— no puedan quedar afuera si mañana se agrega un cliente nuevo.
+/// Antes eran sólo la segunda: `redirect(Policy::none())` estaba, y `https_only`
+/// no. Con `http://` en la dirección guardada, la contraseña de la cuenta
+/// viajaba en claro por la red.
 fn cliente() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(TIMEOUT)
-        // Sin redirecciones: el pedido lleva la contraseña, y una redirección la
-        // mandaría adonde el servidor diga.
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent("VasakOS")
-        .build()
-        .map_err(|e| format!("no se pudo crear el cliente HTTP: {e}"))
+    dav::client(TIMEOUT)
 }
 
+/// La respuesta del servidor, con tope y con los estados raros como error.
+///
+/// Los textos son de [`DavError`], y son **fijos**: sin la dirección del servidor
+/// y sin lo que escribió el otro lado. La ventana los muestra a la persona y
+/// cualquier programa de la sesión los puede leer del estado, así que no pueden
+/// llevar el nombre de la máquina ni los nombres del certificado que dio el
+/// otro lado. El detalle va al diario, y acá no hay.
 async fn cuerpo_con_tope(mut respuesta: reqwest::Response) -> Result<String, String> {
     let estado = respuesta.status();
     if estado == reqwest::StatusCode::UNAUTHORIZED {
-        return Err("el servidor rechazó el usuario o la contraseña. \
-                    Volvé a conectar la cuenta desde Configuración"
-            .into());
+        return Err(DavError::Unauthorized.to_string());
+    }
+    // Una redirección no se sigue —`dav::client` lo tiene así— y acá es un error
+    // y no un estado más: el `3xx` no trae los eventos, y seguirlo mandaría la
+    // credencial a donde el servidor dijera.
+    if estado.is_redirection() {
+        return Err(DavError::Redirect(estado.as_u16()).to_string());
     }
     if !estado.is_success() {
-        return Err(format!("el servidor respondió {estado}"));
+        return Err(DavError::Status(estado.as_u16()).to_string());
     }
 
     // Por trozos y cortando en el momento, no `bytes()` y después medir.
     //
     // `bytes()` lee la respuesta **entera** antes de devolverla, así que medirla
-    // después es enterarse del problema cuando ya pasó: un servidor que manda
+    // después es enterarte del problema cuando ya pasó: un servidor que manda
     // gigabytes hace crecer la memoria de la ventana hasta donde quiera y el
     // aviso llega —si llega— cuando el equipo ya está pidiendo memoria al
     // sistema. Así se deja de leer en el trozo que cruza el tope, y lo que sigue
@@ -490,12 +550,10 @@ async fn cuerpo_con_tope(mut respuesta: reqwest::Response) -> Result<String, Str
     while let Some(trozo) = respuesta
         .chunk()
         .await
-        .map_err(|e| format!("no se pudo leer la respuesta: {e}"))?
+        .map_err(|e| DavError::network(e.without_url()).to_string())?
     {
         if cuerpo.len() + trozo.len() > MAX_CUERPO {
-            return Err(format!(
-                "el servidor mandó más de {MAX_CUERPO} bytes, que es lo que se lee de una vez"
-            ));
+            return Err(DavError::BodyTooLarge(MAX_CUERPO).to_string());
         }
         cuerpo.extend_from_slice(&trozo);
     }
@@ -503,10 +561,22 @@ async fn cuerpo_con_tope(mut respuesta: reqwest::Response) -> Result<String, Str
     Ok(String::from_utf8_lossy(&cuerpo).into_owned())
 }
 
+/// La dirección de la cuenta, ya comprobada: `https` y sin usuario y contraseña
+/// adentro.
+///
+/// `cuentas::credencial_desde` mira que empiece con `https://`, que hace falta
+/// pero no alcanza: `https://ana:secreto@nube.ejemplo.com/dav/` la pasa y tiene
+/// la credencial dentro de la URL. Acá se parsea y se mira de verdad.
+fn direccion_de(credencial: &crate::cuentas::Credencial) -> Result<Url, String> {
+    dav::parse_account_url(&credencial.home).map_err(|e| e.to_string())
+}
+
 /// Los calendarios que hay en la carpeta de la persona.
 pub async fn calendarios(
     credencial: &crate::cuentas::Credencial,
 ) -> Result<Vec<Calendario>, String> {
+    let home = direccion_de(credencial)?;
+
     let cuerpo = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="{NS_CALDAV}" xmlns:a="{NS_APPLE}">
@@ -515,7 +585,7 @@ pub async fn calendarios(
     );
 
     let respuesta = cliente()?
-        .request(metodo("PROPFIND"), &credencial.home)
+        .request(metodo("PROPFIND"), home.clone())
         .header("Authorization", cabecera_de(credencial))
         // 1: la carpeta y lo que hay dentro. Con 0 sólo vendría la carpeta, que
         // es justo lo que no interesa.
@@ -524,21 +594,40 @@ pub async fn calendarios(
         .body(cuerpo)
         .send()
         .await
-        .map_err(|e| format!("no se pudo consultar {}: {e}", credencial.home))?;
+        .map_err(|e| DavError::network(e.without_url()).to_string())?;
 
     let xml = cuerpo_con_tope(respuesta).await?;
-    Ok(calendarios_de(&xml, &credencial.home))
+    // El XML se arma fuera del hilo del bucle de eventos: un `multistatus` de
+    // ocho megas tarda lo suyo, y mientras lo ocupe la ventana no atiende nada
+    // más. Y si se cae por dentro, vuelve como un documento que no se entiende
+    // en vez de llevarse la tarea.
+    dav::off_runtime(move || calendarios_de(&xml, &home))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Los eventos de un calendario entre dos momentos.
+///
+/// **La dirección se compara con la de la cuenta antes de mandar nada.** Viene
+/// de la ventana —o sea, de un proceso de la sesión—, y el `Authorization` va en
+/// el mismo pedido: sin esta comprobación, un `calendario` de otro origen se
+/// lleva la credencial de la cuenta a otro servidor. `calendarios_de` ya
+/// descarta los que no son del mismo origen; esto es para el caso de que se pida
+/// uno que no vino de la lista.
 pub async fn eventos(
     credencial: &crate::cuentas::Credencial,
     calendario: &str,
     desde: DateTime<Utc>,
     hasta: DateTime<Utc>,
 ) -> Result<Vec<Evento>, String> {
+    let home = direccion_de(credencial)?;
+    let pedido = dav::resolve_href(&home, calendario).map_err(|e| e.to_string())?;
+    if pedido.origin() != home.origin() {
+        return Err(DavError::ForeignOrigin.to_string());
+    }
+
     let respuesta = cliente()?
-        .request(metodo("REPORT"), calendario)
+        .request(metodo("REPORT"), pedido)
         .header("Authorization", cabecera_de(credencial))
         // 1: los eventos de este calendario. El estándar lo pide para una
         // consulta de calendario, y hay servidores que sin esto devuelven vacío.
@@ -550,13 +639,14 @@ pub async fn eventos(
         ))
         .send()
         .await
-        .map_err(|e| format!("no se pudieron pedir los eventos: {e}"))?;
+        .map_err(|e| DavError::network(e.without_url()).to_string())?;
 
     let xml = cuerpo_con_tope(respuesta).await?;
-    Ok(ical_de_respuesta(&xml)
-        .iter()
-        .flat_map(|ical| eventos_de(ical))
-        .collect())
+    let bloques = dav::off_runtime(move || ical_de_respuesta(&xml))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(bloques.iter().flat_map(|ical| eventos_de(ical)).collect())
 }
 
 fn metodo(nombre: &str) -> reqwest::Method {
@@ -966,12 +1056,15 @@ mod tests {
   </d:response>
 </d:multistatus>"#;
 
+    fn base() -> Url {
+        Url::parse("https://nube.ejemplo.com/dav/calendars/ana/").unwrap()
+    }
+
     /// La carpeta también trae cosas que no son calendarios. Listarlas daría
     /// entradas que al abrirlas no tienen nada.
     #[test]
     fn solo_se_listan_las_colecciones_que_son_calendarios() {
-        let calendarios =
-            calendarios_de(CALENDARIOS, "https://nube.ejemplo.com/dav/calendars/ana/");
+        let calendarios = calendarios_de(CALENDARIOS, &base()).unwrap();
 
         assert_eq!(calendarios.len(), 1);
         assert_eq!(calendarios[0].nombre, "Personal");
@@ -983,21 +1076,96 @@ mod tests {
     }
 
     /// Los servidores contestan con una ruta absoluta casi siempre y con una URL
-    /// entera a veces. Pegarlas a mano rompería la segunda.
+    /// entera a veces, y del mismo origen: pegarlas a mano rompería la segunda.
     #[test]
-    fn un_href_con_url_entera_no_se_pega_dos_veces() {
+    fn un_href_con_url_entera_del_mismo_origen_no_se_pega_dos_veces() {
         let xml = CALENDARIOS.replace(
             "<d:href>/dav/calendars/ana/personal/</d:href>",
-            "<d:href>https://otra.ejemplo.com/x/</d:href>",
+            "<d:href>https://nube.ejemplo.com/dav/calendars/ana/personal/</d:href>",
         );
-        let calendarios = calendarios_de(&xml, "https://nube.ejemplo.com/dav/calendars/ana/");
-        assert_eq!(calendarios[0].url, "https://otra.ejemplo.com/x/");
+        let calendarios = calendarios_de(&xml, &base()).unwrap();
+        assert_eq!(calendarios.len(), 1);
+        assert_eq!(
+            calendarios[0].url,
+            "https://nube.ejemplo.com/dav/calendars/ana/personal/"
+        );
     }
 
+    /// **Un calendario de otro origen no se lista.** Es la fuga de credencial de
+    /// `vasak-calendar#45`: el `calendario.url` que salía de acá se lo pedía
+    /// después `eventos()` con la cabecera `Authorization` puesta, y el servidor
+    /// contestando con un `href` de otra máquina se la llevaba.
     #[test]
-    fn un_xml_roto_no_da_calendarios() {
-        assert!(calendarios_de("no es xml", "https://x/").is_empty());
-        assert!(ical_de_respuesta("<abierto>").is_empty());
+    fn un_calendario_de_otro_servidor_no_se_lista() {
+        for ajeno in [
+            "https://otra.ejemplo.com/x/",
+            "http://nube.ejemplo.com/dav/calendars/ana/personal/",
+            // Misma máquina, otro esquema: la credencial por HTTP es a la vista.
+            "https://nube.ejemplo.com:8443/dav/calendars/ana/personal/",
+            // La contraseña dentro de la dirección.
+            "https://ana:secreto@nube.ejemplo.com/dav/calendars/ana/personal/",
+        ] {
+            let xml = CALENDARIOS.replace(
+                "<d:href>/dav/calendars/ana/personal/</d:href>",
+                &format!("<d:href>{ajeno}</d:href>"),
+            );
+            let calendarios = calendarios_de(&xml, &base()).unwrap();
+            assert!(
+                calendarios.is_empty(),
+                "{ajeno} se listó: {:?}",
+                calendarios.iter().map(|c| &c.url).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    /// Uno de otro origen no tapa a los de la cuenta: el documento entero se
+    /// sigue=listando, y el que no se puede pedir simplemente no está.
+    #[test]
+    fn un_calendario_ajeno_no_tapa_a_los_demas() {
+        // Dos respuestas en el mismo documento: la propia y una de otro
+        // servidor.
+        let dos = CALENDARIOS.replace(
+            "</d:multistatus>",
+            r#"<d:response>
+    <d:href>https://atacante.ejemplo.com/robo/</d:href>
+    <d:propstat><d:prop>
+      <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+      <d:displayname>Trabajo</d:displayname>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>"#,
+        );
+        let calendarios = calendarios_de(&dos, &base()).unwrap();
+        assert_eq!(calendarios.len(), 1, "{calendarios:?}");
+        assert_eq!(calendarios[0].nombre, "Personal");
+    }
+
+    /// Un XML que no se entiende es un error, no una lista vacía.
+    ///
+    /// Antes `calendarios_de` devolvía `vec![]` si `roxmltree` no podía leer el
+    /// documento, y `ListEvents` contestaba una lista vacía de eventos sin decir
+    /// nada: una conexión que se cortó o un servidor que devolvió una página de
+    /// error se veían igual que «no tenés eventos».
+    #[test]
+    fn un_xml_roto_es_un_error_y_no_una_lista_vacia() {
+        for roto in ["no es xml", "<abierto>", "", "<a><b></a>"] {
+            assert!(
+                matches!(calendarios_de(roto, &base()), Err(DavError::BadXml(_))),
+                "calendarios_de({roto:?}) debería ser BadXml",
+            );
+            assert!(
+                matches!(ical_de_respuesta(roto), Err(DavError::BadXml(_))),
+                "ical_de_respuesta({roto:?}) debería ser BadXml",
+            );
+        }
+    }
+
+    /// Y el camino de verdad de un XML que no se entiende tampoco se come el
+    /// documento: un `multistatus` de verdad pasa.
+    #[test]
+    fn un_multistatus_de_verdad_no_pasa_los_topes() {
+        assert!(calendarios_de(CALENDARIOS, &base()).is_ok());
+        assert!(dav::check_shape(CALENDARIOS, &LIMITES).is_ok());
     }
 
     /// El rango va siempre en UTC y sin guiones: un servidor rechaza el pedido
