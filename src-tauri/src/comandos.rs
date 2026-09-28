@@ -73,13 +73,15 @@ pub async fn eventos_de_la_cuenta(
 
     for calendario in &calendarios {
         match caldav::eventos(&credencial, &calendario.url, desde, hasta).await {
-            Ok(eventos) => lectura.eventos.extend(eventos.into_iter().map(|evento| {
-                EventoEnCalendario {
-                    evento,
-                    calendario: calendario.url.clone(),
-                    color: calendario.color.clone(),
-                }
-            })),
+            Ok(eventos) => {
+                lectura
+                    .eventos
+                    .extend(eventos.into_iter().map(|evento| EventoEnCalendario {
+                        evento,
+                        calendario: calendario.url.clone(),
+                        color: calendario.color.clone(),
+                    }))
+            }
             // Nombre y motivo: «falló un calendario» no le dice a nadie cuál de
             // los suyos le falta.
             Err(e) => lectura.fallos.push(format!("{}: {e}", calendario.nombre)),
@@ -104,7 +106,9 @@ fn rango(desde: &str, hasta: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), Str
     let desde = momento(desde)?;
     let hasta = momento(hasta)?;
     if hasta <= desde {
-        return Err(format!("el rango termina antes de empezar: {desde} → {hasta}"));
+        return Err(format!(
+            "el rango termina antes de empezar: {desde} → {hasta}"
+        ));
     }
     Ok((desde, hasta))
 }
@@ -117,7 +121,8 @@ mod tests {
     fn el_rango_se_lee_en_utc() {
         // La ventana manda la hora local con su desfase; acá tiene que quedar en
         // UTC, que es lo único que entiende un servidor CalDAV.
-        let (desde, hasta) = rango("2026-09-01T00:00:00-03:00", "2026-10-01T00:00:00-03:00").unwrap();
+        let (desde, hasta) =
+            rango("2026-09-01T00:00:00-03:00", "2026-10-01T00:00:00-03:00").unwrap();
         assert_eq!(desde.to_rfc3339(), "2026-09-01T03:00:00+00:00");
         assert_eq!(hasta.to_rfc3339(), "2026-10-01T03:00:00+00:00");
     }

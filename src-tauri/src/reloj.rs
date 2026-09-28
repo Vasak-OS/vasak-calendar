@@ -173,7 +173,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn timedate1_contesta_una_zona() {
-        let zona = de_timedate1().await.expect("timedate1 tendría que contestar");
+        let zona = de_timedate1()
+            .await
+            .expect("timedate1 tendría que contestar");
         assert!(nombre_valido(&zona), "{zona:?}");
 
         // Y que el camino corto —el enlace de `/etc/localtime`— diga lo mismo.

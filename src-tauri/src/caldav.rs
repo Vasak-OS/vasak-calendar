@@ -141,11 +141,43 @@ pub fn partir_linea(linea: &str) -> Option<(String, Vec<String>, String)> {
     let (izquierda, derecha) = linea.split_at(corte);
     let valor = derecha[1..].to_string();
 
-    let mut partes = izquierda.split(';');
-    let nombre = partes.next()?.trim().to_ascii_uppercase();
-    let parametros: Vec<String> = partes.map(|p| p.trim().to_string()).collect();
+    // Los parámetros se separan por `;`, **pero no dentro de comillas**.
+    // `CN="Pérez; Ana"` tiene un `;` que no separa.
+    let mut partes = Vec::new();
+    let mut inicio = 0;
+    let mut en_comillas = false;
+    for (i, c) in izquierda.char_indices() {
+        match c {
+            '"' => en_comillas = !en_comillas,
+            ';' if !en_comillas => {
+                let parte = &izquierda[inicio..i].trim();
+                if !parte.is_empty() {
+                    partes.push(parte.to_string());
+                }
+                inicio = i + 1;
+            }
+            _ => {}
+        }
+    }
+    // El último trozo
+    let resto = &izquierda[inicio..].trim();
+    if !resto.is_empty() {
+        partes.push(resto.to_string());
+    }
 
-    Some((nombre, parametros, valor))
+    if partes.is_empty() {
+        return None;
+    }
+
+    // El primer elemento es el nombre, el resto son parámetros
+    let nombre = partes[0].trim().to_ascii_uppercase().to_string();
+    let parametros: Vec<String> = partes[1..]
+        .iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    Some((nombre, parametros, derecha[1..].to_string()))
 }
 
 /// Devuelve el texto de un valor `TEXT`, deshaciendo lo escapado.
@@ -175,7 +207,17 @@ pub fn texto_de(valor: &str) -> String {
             None => salida.push('\\'),
         }
     }
+    // Los caracteres de control (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F, 0x7F)
+    // no tienen representación visible y pueden romper la visualización;
+    // los filtramos. Permitimos \n (0x0A), \r (0x0D), \t (0x09) que son
+    // espacios en blanco legítimos en iCalendar.
     salida
+        .chars()
+        .filter(|c| {
+            let code = *c as u32;
+            !matches!(code, 0x00..=0x08 | 0x0B..=0x0C | 0x0E..=0x1F | 0x7F)
+        })
+        .collect()
 }
 
 /// Interpreta una fecha de iCalendar.
