@@ -171,7 +171,8 @@ pub fn partir_linea(linea: &str) -> Option<(String, Vec<String>, String)> {
 
     // El primer elemento es el nombre, el resto son parámetros
     let nombre = partes[0].trim().to_ascii_uppercase().to_string();
-    let parametros: Vec<String> = partes[1..].iter()
+    let parametros: Vec<String> = partes[1..]
+        .iter()
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .collect();

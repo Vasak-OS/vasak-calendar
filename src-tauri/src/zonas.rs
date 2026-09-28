@@ -114,9 +114,9 @@ impl Zona {
                 let desplazamiento = reglas.desplazamiento_en(local);
                 Some(Utc.from_utc_datetime(&(local - desplazamiento)))
             }
-            Zona::Flotante => con_tolerancia(local, |momento| {
-                chrono::Local.from_local_datetime(momento)
-            }),
+            Zona::Flotante => {
+                con_tolerancia(local, |momento| chrono::Local.from_local_datetime(momento))
+            }
         }
     }
 }
@@ -144,8 +144,16 @@ where
     }
 
     let un_dia = Duration::days(1);
-    let antes = resolver(&(local - un_dia)).earliest()?.offset().fix().local_minus_utc();
-    let despues = resolver(&(local + un_dia)).earliest()?.offset().fix().local_minus_utc();
+    let antes = resolver(&(local - un_dia))
+        .earliest()?
+        .offset()
+        .fix()
+        .local_minus_utc();
+    let despues = resolver(&(local + un_dia))
+        .earliest()?
+        .offset()
+        .fix()
+        .local_minus_utc();
     let salto = Duration::seconds((despues - antes).into());
 
     // Un salto que no es hacia adelante no explica el agujero. No se insiste:
@@ -188,7 +196,11 @@ impl Reglas {
         }
         transiciones.sort_by_key(|(cuando, _, _)| *cuando);
 
-        match transiciones.iter().rev().find(|(cuando, _, _)| *cuando <= local) {
+        match transiciones
+            .iter()
+            .rev()
+            .find(|(cuando, _, _)| *cuando <= local)
+        {
             Some((_, _, hasta)) => *hasta,
             // Antes de la primera transición conocida corría lo que esa
             // transición dejó atrás.
@@ -234,7 +246,9 @@ impl Observancia {
     /// cambio.
     fn transicion_en(&self, anio: i32) -> Option<NaiveDateTime> {
         match &self.regla {
-            Some(regla) => regla.fecha_en(anio).map(|dia| dia.and_time(self.comienzo.time())),
+            Some(regla) => regla
+                .fecha_en(anio)
+                .map(|dia| dia.and_time(self.comienzo.time())),
             // Sin regla la observancia vale desde su `DTSTART` y no se repite.
             // Sirve igual: una zona de desplazamiento fijo entra por acá.
             None => (self.comienzo.year() == anio).then_some(self.comienzo),
@@ -247,7 +261,11 @@ impl Observancia {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReglaAnual {
     /// «El último domingo de octubre»: `FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU`.
-    DiaDeSemana { mes: u32, ordinal: i32, dia: Weekday },
+    DiaDeSemana {
+        mes: u32,
+        ordinal: i32,
+        dia: Weekday,
+    },
     /// «El 1 de enero»: `FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=1`.
     DiaDelMes { mes: u32, dia: u32 },
 }
@@ -286,14 +304,19 @@ fn dia_de_semana_del_mes(anio: i32, mes: u32, ordinal: i32, dia: Weekday) -> Opt
     }
 
     let ultimo = ultimo_dia_del_mes(anio, mes)?;
-    let retroceder =
-        (7 + ultimo.weekday().num_days_from_monday() as i64 - dia.num_days_from_monday() as i64) % 7;
+    let retroceder = (7 + ultimo.weekday().num_days_from_monday() as i64
+        - dia.num_days_from_monday() as i64)
+        % 7;
     let fecha = ultimo - Duration::days(retroceder + (-ordinal as i64 - 1) * 7);
     (fecha.month() == mes).then_some(fecha)
 }
 
 fn ultimo_dia_del_mes(anio: i32, mes: u32) -> Option<NaiveDate> {
-    let (anio_siguiente, mes_siguiente) = if mes == 12 { (anio + 1, 1) } else { (anio, mes + 1) };
+    let (anio_siguiente, mes_siguiente) = if mes == 12 {
+        (anio + 1, 1)
+    } else {
+        (anio, mes + 1)
+    };
     Some(NaiveDate::from_ymd_opt(anio_siguiente, mes_siguiente, 1)? - Duration::days(1))
 }
 
@@ -366,7 +389,8 @@ pub fn tabla_de(ical: &str) -> Zonas {
                     continue;
                 }
                 if let Some(id) = tzid.take() {
-                    if let Some(zona) = armar(&id, ubicacion.take(), std::mem::take(&mut observancias))
+                    if let Some(zona) =
+                        armar(&id, ubicacion.take(), std::mem::take(&mut observancias))
                     {
                         zonas.insert(id, zona);
                     }
@@ -489,7 +513,11 @@ fn desplazamiento_de(valor: &str) -> Option<FixedOffset> {
 
     let horas: i32 = resto[0..2].parse().ok()?;
     let minutos: i32 = resto[2..4].parse().ok()?;
-    let segundos: i32 = if resto.len() == 6 { resto[4..6].parse().ok()? } else { 0 };
+    let segundos: i32 = if resto.len() == 6 {
+        resto[4..6].parse().ok()?
+    } else {
+        0
+    };
     if minutos > 59 || segundos > 59 {
         return None;
     }
@@ -523,9 +551,19 @@ fn regla_de(valor: &str) -> Option<ReglaAnual> {
         let (nombre, contenido) = parte.split_once('=')?;
         match nombre.trim().to_ascii_uppercase().as_str() {
             "FREQ" => anual = contenido.trim().eq_ignore_ascii_case("YEARLY"),
-            "BYMONTH" => mes = contenido.trim().parse::<u32>().ok().filter(|m| (1..=12).contains(m)),
+            "BYMONTH" => {
+                mes = contenido
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|m| (1..=12).contains(m))
+            }
             "BYMONTHDAY" => {
-                dia_del_mes = contenido.trim().parse::<u32>().ok().filter(|d| (1..=31).contains(d))
+                dia_del_mes = contenido
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|d| (1..=31).contains(d))
             }
             "BYDAY" => dia_de_semana = dia_de_semana_de(contenido.trim()),
             // `INTERVAL`, `UNTIL` y `COUNT` en un `VTIMEZONE` son rarísimos y
@@ -585,7 +623,11 @@ fn dia_de_semana_de(valor: &str) -> Option<(i32, Weekday)> {
         _ => return None,
     };
 
-    let ordinal = if prefijo.is_empty() { 1 } else { prefijo.parse::<i32>().ok()? };
+    let ordinal = if prefijo.is_empty() {
+        1
+    } else {
+        prefijo.parse::<i32>().ok()?
+    };
     (ordinal != 0 && ordinal.abs() <= MAX_ORDINAL).then_some((ordinal, dia))
 }
 
@@ -610,14 +652,20 @@ mod tests {
     fn un_tzid_de_iana_se_resuelve_solo() {
         let zonas = Zonas::default();
         let zona = zonas.resolver("America/Argentina/Buenos_Aires");
-        assert_eq!(zona, Zona::Iana(chrono_tz::America::Argentina::Buenos_Aires));
+        assert_eq!(
+            zona,
+            Zona::Iana(chrono_tz::America::Argentina::Buenos_Aires)
+        );
 
         // Las dos de la tarde en Buenos Aires son las cinco UTC, no las dos.
         let local = NaiveDate::from_ymd_opt(2026, 9, 15)
             .unwrap()
             .and_hms_opt(14, 0, 0)
             .unwrap();
-        assert_eq!(zona.a_utc(local).unwrap().to_rfc3339(), "2026-09-15T17:00:00+00:00");
+        assert_eq!(
+            zona.a_utc(local).unwrap().to_rfc3339(),
+            "2026-09-15T17:00:00+00:00"
+        );
     }
 
     /// El mismo `TZID` entre comillas, que es como viene cuando tiene barras.
@@ -636,11 +684,23 @@ mod tests {
     fn el_horario_de_verano_cambia_el_instante() {
         let zona = Zonas::default().resolver("Europe/Madrid");
 
-        let invierno = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(invierno).unwrap().to_rfc3339(), "2026-01-15T08:00:00+00:00");
+        let invierno = NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(invierno).unwrap().to_rfc3339(),
+            "2026-01-15T08:00:00+00:00"
+        );
 
-        let verano = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(verano).unwrap().to_rfc3339(), "2026-07-15T07:00:00+00:00");
+        let verano = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(verano).unwrap().to_rfc3339(),
+            "2026-07-15T07:00:00+00:00"
+        );
     }
 
     /// Lo que escribe Outlook: un `TZID` que no es de IANA y las reglas
@@ -670,12 +730,24 @@ mod tests {
         assert!(matches!(zona, Zona::Reglas(_)), "{zona:?}");
 
         // Invierno: +1. En 2026 el cambio a verano es el 29 de marzo.
-        let invierno = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(invierno).unwrap().to_rfc3339(), "2026-01-15T08:00:00+00:00");
+        let invierno = NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(invierno).unwrap().to_rfc3339(),
+            "2026-01-15T08:00:00+00:00"
+        );
 
         // Verano: +2.
-        let verano = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(verano).unwrap().to_rfc3339(), "2026-07-15T07:00:00+00:00");
+        let verano = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(verano).unwrap().to_rfc3339(),
+            "2026-07-15T07:00:00+00:00"
+        );
     }
 
     /// Y da lo mismo que la zona de IANA equivalente, que es la prueba de que
@@ -685,7 +757,15 @@ mod tests {
         let de_las_reglas = tabla_de(ROMANCE).resolver("Romance Standard Time");
         let de_iana = Zonas::default().resolver("Europe/Madrid");
 
-        for (mes, dia) in [(1, 15), (3, 28), (4, 2), (7, 15), (10, 24), (11, 2), (12, 31)] {
+        for (mes, dia) in [
+            (1, 15),
+            (3, 28),
+            (4, 2),
+            (7, 15),
+            (10, 24),
+            (11, 2),
+            (12, 31),
+        ] {
             let local = NaiveDate::from_ymd_opt(2026, mes, dia)
                 .unwrap()
                 .and_hms_opt(9, 0, 0)
@@ -721,12 +801,24 @@ mod tests {
 
         // Enero está del lado del verano que empezó en septiembre **del año
         // anterior**: -3. Sin mirar el año anterior daría -4.
-        let enero = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(enero).unwrap().to_rfc3339(), "2026-01-15T12:00:00+00:00");
+        let enero = NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(enero).unwrap().to_rfc3339(),
+            "2026-01-15T12:00:00+00:00"
+        );
 
         // Junio es invierno: -4.
-        let junio = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(junio).unwrap().to_rfc3339(), "2026-06-15T13:00:00+00:00");
+        let junio = NaiveDate::from_ymd_opt(2026, 6, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(junio).unwrap().to_rfc3339(),
+            "2026-06-15T13:00:00+00:00"
+        );
     }
 
     /// Una zona sin horario de verano: una sola observancia y su desplazamiento.
@@ -743,8 +835,14 @@ mod tests {
         let zona = tabla_de(ical).resolver("Zona quieta");
         assert_eq!(zona, Zona::Fija(FixedOffset::east_opt(-3 * 3600).unwrap()));
 
-        let local = NaiveDate::from_ymd_opt(2026, 9, 15).unwrap().and_hms_opt(14, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(local).unwrap().to_rfc3339(), "2026-09-15T17:00:00+00:00");
+        let local = NaiveDate::from_ymd_opt(2026, 9, 15)
+            .unwrap()
+            .and_hms_opt(14, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(local).unwrap().to_rfc3339(),
+            "2026-09-15T17:00:00+00:00"
+        );
     }
 
     /// Lo que escribe libical: nombre propio en el `TZID` y el de IANA adentro.
@@ -773,7 +871,10 @@ mod tests {
                 .trim_start_matches("BEGIN:VCALENDAR\r\n")
                 .trim_end_matches("END:VCALENDAR\r\n")
         );
-        assert!(matches!(tabla_de(&ical).resolver("Romance Standard Time"), Zona::Reglas(_)));
+        assert!(matches!(
+            tabla_de(&ical).resolver("Romance Standard Time"),
+            Zona::Reglas(_)
+        ));
     }
 
     /// Un `TZID` que no se conoce y que el archivo no define: se muestra a la
@@ -791,7 +892,10 @@ mod tests {
     /// definición misma de flotante, y así no depende de en qué zona corra.
     #[test]
     fn una_hora_flotante_es_la_de_la_sesion() {
-        let local = NaiveDate::from_ymd_opt(2026, 9, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
+        let local = NaiveDate::from_ymd_opt(2026, 9, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
         let esperado = chrono::Local
             .from_local_datetime(&local)
             .earliest()
@@ -804,8 +908,14 @@ mod tests {
     #[test]
     fn los_desplazamientos_se_leen_en_sus_tres_formas() {
         assert_eq!(desplazamiento_de("+0200"), FixedOffset::east_opt(2 * 3600));
-        assert_eq!(desplazamiento_de("-0330"), FixedOffset::east_opt(-(3 * 3600 + 30 * 60)));
-        assert_eq!(desplazamiento_de("+020000"), FixedOffset::east_opt(2 * 3600));
+        assert_eq!(
+            desplazamiento_de("-0330"),
+            FixedOffset::east_opt(-(3 * 3600 + 30 * 60))
+        );
+        assert_eq!(
+            desplazamiento_de("+020000"),
+            FixedOffset::east_opt(2 * 3600)
+        );
         assert_eq!(desplazamiento_de("-0000"), FixedOffset::east_opt(0));
     }
 
@@ -849,7 +959,10 @@ mod tests {
         // Mensual no es anual.
         assert_eq!(regla_de("FREQ=MONTHLY;BYMONTH=3;BYDAY=-1SU"), None);
         // Un intervalo cambiaría el resultado y se descarta en vez de ignorarse.
-        assert_eq!(regla_de("FREQ=YEARLY;INTERVAL=2;BYMONTH=3;BYDAY=-1SU"), None);
+        assert_eq!(
+            regla_de("FREQ=YEARLY;INTERVAL=2;BYMONTH=3;BYDAY=-1SU"),
+            None
+        );
         // Sin mes no hay nada que calcular.
         assert_eq!(regla_de("FREQ=YEARLY;BYDAY=-1SU"), None);
     }
@@ -884,11 +997,19 @@ mod tests {
     fn un_punto_y_coma_de_mas_no_descarta_la_regla() {
         assert_eq!(
             regla_de("FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;"),
-            Some(ReglaAnual::DiaDeSemana { mes: 3, ordinal: -1, dia: Weekday::Sun })
+            Some(ReglaAnual::DiaDeSemana {
+                mes: 3,
+                ordinal: -1,
+                dia: Weekday::Sun
+            })
         );
         assert_eq!(
             regla_de(";;FREQ=YEARLY;;BYMONTH=3;BYDAY=-1SU"),
-            Some(ReglaAnual::DiaDeSemana { mes: 3, ordinal: -1, dia: Weekday::Sun })
+            Some(ReglaAnual::DiaDeSemana {
+                mes: 3,
+                ordinal: -1,
+                dia: Weekday::Sun
+            })
         );
         // Un pedazo que **sí** dice algo y no se entiende sigue descartando la
         // regla entera: interpretarla a medias es peor.
@@ -916,8 +1037,14 @@ mod tests {
             END:VTIMEZONE\r\n";
         let zona = tabla_de(ical).resolver("Zona historica");
 
-        let local = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
-        assert_eq!(zona.a_utc(local).unwrap().to_rfc3339(), "2026-07-15T08:00:00+00:00");
+        let local = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            zona.a_utc(local).unwrap().to_rfc3339(),
+            "2026-07-15T08:00:00+00:00"
+        );
     }
 
     /// La hora que no existe se corre hacia adelante en vez de hacer desaparecer
@@ -926,9 +1053,14 @@ mod tests {
     #[test]
     fn la_hora_que_no_existe_se_corre_hacia_adelante() {
         let zona = Zonas::default().resolver("Europe/Madrid");
-        let inexistente = NaiveDate::from_ymd_opt(2026, 3, 29).unwrap().and_hms_opt(2, 30, 0).unwrap();
+        let inexistente = NaiveDate::from_ymd_opt(2026, 3, 29)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
 
-        let momento = zona.a_utc(inexistente).expect("no puede desaparecer del mes");
+        let momento = zona
+            .a_utc(inexistente)
+            .expect("no puede desaparecer del mes");
         assert_eq!(momento.to_rfc3339(), "2026-03-29T01:30:00+00:00");
     }
 
@@ -937,10 +1069,16 @@ mod tests {
     fn la_hora_que_ocurre_dos_veces_se_toma_la_primera() {
         let zona = Zonas::default().resolver("Europe/Madrid");
         // El 25 de octubre de 2026 el reloj atrasa de las 3 a las 2.
-        let ambigua = NaiveDate::from_ymd_opt(2026, 10, 25).unwrap().and_hms_opt(2, 30, 0).unwrap();
+        let ambigua = NaiveDate::from_ymd_opt(2026, 10, 25)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
 
         // La primera es con +2 todavía puesto: 00:30 UTC.
-        assert_eq!(zona.a_utc(ambigua).unwrap().to_rfc3339(), "2026-10-25T00:30:00+00:00");
+        assert_eq!(
+            zona.a_utc(ambigua).unwrap().to_rfc3339(),
+            "2026-10-25T00:30:00+00:00"
+        );
     }
 
     /// Un archivo con muchísimas zonas no hace crecer la tabla sin freno.
