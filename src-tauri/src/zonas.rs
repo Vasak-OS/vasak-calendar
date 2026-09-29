@@ -628,7 +628,14 @@ fn dia_de_semana_de(valor: &str) -> Option<(i32, Weekday)> {
     } else {
         prefijo.parse::<i32>().ok()?
     };
-    (ordinal != 0 && ordinal.abs() <= MAX_ORDINAL).then_some((ordinal, dia))
+    // Un **rango**, y no `abs()`, y no por gusto del estilo: `abs()` de
+    // `i32::MIN` desborda. En release ni siquiera desborda — devuelve el mismo
+    // `i32::MIN`—, así que el ordinal pasaba el filtro de todos modos y se iba
+    // derecho al cálculo de la fecha, donde multiplicado por siete se lo lleva
+    // el rango de `NaiveDate` y el `Sub` entra en pánico. Comparar contra el
+    // rango no tiene ningún extremo que se le escape: los dos quedan fuera, y
+    // de los dos lados.
+    ((-MAX_ORDINAL..=MAX_ORDINAL).contains(&ordinal) && ordinal != 0).then_some((ordinal, dia))
 }
 
 /// Saca las comillas de un valor de parámetro.
@@ -990,6 +997,70 @@ mod tests {
         assert_eq!(dia_de_semana_de("5SU"), Some((5, Weekday::Sun)));
         assert_eq!(dia_de_semana_de("-1SU"), Some((-1, Weekday::Sun)));
         assert_eq!(dia_de_semana_de("SU"), Some((1, Weekday::Sun)));
+    }
+
+    /// El ordinal en el **extremo del tipo**, que es el caso que faltaba.
+    ///
+    /// Lo de arriba es el caso fácil: `999999999` entra en `i32` y lo rechaza el
+    /// filtro. Lo difícil es `-2147483648`: también entra en `i32` —es
+    /// `i32::MIN`, el valor más negativo que existe— y `abs()` **sobre él
+    /// desborda**. En release ni siquiera desborda: devuelve el mismo
+    /// `i32::MIN`, que no es «mayor que cinco», así que pasaba el filtro de todos
+    /// modos. Un archivo lo escribe quien sea, y ese archivo tumbaba la
+    /// aplicación.
+    #[test]
+    fn un_ordinal_en_el_extremo_del_tipo_no_pasa_el_filtro() {
+        // Los dos extremos de `i32`. El negativo revienta el `abs()`; el
+        // positivo estaba cubierto de paso, y queda como guarda.
+        assert_eq!(dia_de_semana_de("-2147483648SU"), None);
+        assert_eq!(dia_de_semana_de("2147483647SU"), None);
+        // Y los que ni siquiera llegan a ser `i32`, que `parse` ya rechaza.
+        assert_eq!(dia_de_semana_de("-2147483649SU"), None);
+        assert_eq!(dia_de_semana_de("2147483648SU"), None);
+
+        // El cero sigue descartándose: no existe «el domingo cero».
+        assert_eq!(dia_de_semana_de("0SU"), None);
+        // Y el rango que sí vale sigue valiendo, en los dos sentidos.
+        assert_eq!(dia_de_semana_de("5SU"), Some((5, Weekday::Sun)));
+        assert_eq!(dia_de_semana_de("-5SU"), Some((-5, Weekday::Sun)));
+        assert_eq!(dia_de_semana_de("-1SU"), Some((-1, Weekday::Sun)));
+        assert_eq!(dia_de_semana_de("SU"), Some((1, Weekday::Sun)));
+    }
+
+    /// El filtro de `MAX_ORDINAL` es la **única** puerta entre el archivo y el
+    /// cálculo de la fecha, y ese cálculo no perdona un ordinal enorme: al
+    /// multiplicarlo por siete, `i32::MIN` se lleva el rango de `NaiveDate` y el
+    /// `Sub` entra en pánico. Por eso no alcanza con probar el filtro por
+    /// separado — hay que probar que **lo que el filtro deja pasar** no
+    /// revienta lo que hay abajo.
+    ///
+    /// En el código viejo esto fallaba por los dos lados, y en los dos perfiles:
+    /// en debug moría el `abs()` de `zonas.rs`, y en release —donde el `abs()`
+    /// no desborda y el valor pasaba— moría el `Sub` de `dia_de_semana_del_mes`.
+    #[test]
+    fn nada_que_pase_el_filtro_revienta_el_calculo_de_la_fecha() {
+        for ordinal in [
+            i32::MIN,
+            i32::MIN + 1,
+            -MAX_ORDINAL - 1,
+            -MAX_ORDINAL,
+            -1,
+            0,
+            1,
+            MAX_ORDINAL,
+            MAX_ORDINAL + 1,
+            i32::MAX - 1,
+            i32::MAX,
+        ] {
+            let valor = format!("{ordinal}SU");
+            let Some((ordinal, dia)) = dia_de_semana_de(&valor) else {
+                // Descartado por el filtro: no hay forma de que llegue abajo.
+                continue;
+            };
+            // Si llega, tiene que dar una fecha o ninguna —si ese día no existe
+            // en ese mes—, pero no puede entrar en pánico.
+            let _ = dia_de_semana_del_mes(2026, 10, ordinal, dia);
+        }
     }
 
     /// Un punto y coma de más no puede mandar una regla legible al respaldo.

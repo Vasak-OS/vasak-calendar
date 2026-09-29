@@ -84,6 +84,21 @@ comillas, el evento de día completo que termina en la medianoche del día
 siguiente, y `new Date('2026-09-15')` — que el motor lee como UTC y en cualquier
 zona al oeste de Greenwich devuelve el día anterior.
 
+El peor de todos es el que **no** se equivoca: el que tumba la aplicación. Un
+`VTIMEZONE` es un bloque de texto que escribe el servidor, y sus `RRULE` pueden
+traer cualquier cosa. El `BYDAY` de una transición admite un ordinal —«el
+último domingo» es `-1`— y ese ordinal estaba filtrado con `abs()`, que
+**desborda con `i32::MIN`**: el valor más negativo que existe, y que entra en
+`i32` sin problema. En desarrollo eso reventaba el filtro; en release, que es
+como se distribuye, el `abs()` no desborda y devuelve el mismo `i32::MIN`, así
+que el valor pasaba el filtro y se iba al cálculo de la fecha, donde multiplicado
+por siete se lo llevaba el rango de `NaiveDate`. Con `panic = "abort"` en el
+perfil de release, un archivo con `RRULE:FREQ=YEARLY;BYDAY=-2147483648SU;BYMONTH=10`
+—no inventado: es un campo de texto que manda el servidor— cerraba la aplicación
+entera. El filtro es ahora una comparación contra el rango, que no tiene
+extremos que se le escapen, y hay pruebas del extremo del tipo y del archivo
+completo.
+
 ---
 
 ## Desarrollo

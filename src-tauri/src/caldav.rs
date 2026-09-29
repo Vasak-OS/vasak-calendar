@@ -909,6 +909,51 @@ mod tests {
         assert_eq!(eventos[0].fin, "2026-07-15T08:00:00+00:00");
     }
 
+    /// Un `VTIMEZONE` con el ordinal del `BYDAY` en el extremo del tipo, tal
+    /// como llega de la red.
+    ///
+    /// **De dónde sale:** de la respuesta a un `REPORT` de CalDAV, que es lo que
+    /// devuelve `eventos()` después de `ical_de_respuesta`. El archivo lo escribe
+    /// el servidor —o quien controle el servidor—, no la aplicación. Por eso esto
+    /// no es un archivo imaginario ni una función muerta: es exactamente el
+    /// camino que corre `dav::off_runtime` cuando la persona abre un mes.
+    ///
+    /// Con `-2147483648`, el `abs()` del filtro de `MAX_ORDINAL` **entraba en
+    /// pánico** al leer la zona, antes de mirar un solo evento. Y en release —que
+    /// es como se distribuye, y con `panic = "abort"`— el `abs()` no desbordaba:
+    /// el ordinal pasaba el filtro y entraba en pánico más abajo, restándole
+    /// quince mil millones de días a una fecha. Los dos extremos van en el mismo
+    /// archivo porque el que falla no es uno solo.
+    #[test]
+    fn un_vtimezone_con_el_ordinal_en_el_extremo_no_tumba_la_aplicacion() {
+        let ical = "BEGIN:VCALENDAR\r\n\
+            BEGIN:VTIMEZONE\r\n\
+            TZID:Romance Standard Time\r\n\
+            BEGIN:STANDARD\r\n\
+            DTSTART:16010101T030000\r\n\
+            TZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\n\
+            RRULE:FREQ=YEARLY;BYDAY=-2147483648SU;BYMONTH=10\r\n\
+            END:STANDARD\r\n\
+            BEGIN:DAYLIGHT\r\n\
+            DTSTART:16010101T020000\r\n\
+            TZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\n\
+            RRULE:FREQ=YEARLY;BYDAY=2147483647SU;BYMONTH=3\r\n\
+            END:DAYLIGHT\r\n\
+            END:VTIMEZONE\r\n\
+            BEGIN:VEVENT\r\nUID:abc\r\nSUMMARY:Reunión\r\n\
+            DTSTART;TZID=Romance Standard Time:20260715T090000\r\n\
+            DTEND;TZID=Romance Standard Time:20260715T100000\r\n\
+            END:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        // Lo que no puede pasar es que esto entre en pánico.
+        let eventos = eventos_de(ical);
+        assert_eq!(eventos.len(), 1);
+        // La regla que no se entiende se descarta entera y la observancia cae
+        // al respaldo de la estándar, que es lo que dice su `TZOFFSETTO`: +1.
+        assert_eq!(eventos[0].inicio, "2026-07-15T08:00:00+00:00");
+        assert_eq!(eventos[0].fin, "2026-07-15T09:00:00+00:00");
+    }
+
     /// Un evento de día completo sigue sin tener zona, aunque el archivo defina
     /// una: darle una hora lo correría de día para quien esté en otra.
     #[test]
