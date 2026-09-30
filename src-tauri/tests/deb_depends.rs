@@ -102,12 +102,13 @@ fn estan_las_bibliotecas_que_el_binario_enlaza() {
 }
 
 /// Lo que no se enlaza pero se usa en ejecución, igual que en la receta de
-/// Arch: las cuentas y sus calendarios salen de vasak-accounts, por el bus de
-/// sesión.
+/// Arch: las cuentas y sus calendarios salen de vasak-accounts, por el bus del
+/// sistema, y la zona horaria y sus cambios, de `org.freedesktop.timedate1`,
+/// que trae systemd.
 #[test]
 fn estan_los_programas_que_se_usan_sin_enlazarlos() {
     let depends = deb_depends();
-    for package in ["vasak-accounts", "dbus"] {
+    for package in ["vasak-accounts", "dbus", "systemd"] {
         assert!(
             depends.iter().any(|n| n == package),
             "falta {package} en el .deb"

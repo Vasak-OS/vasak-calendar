@@ -47,6 +47,7 @@
           "libwebkit2gtk-4.1-0",
           "vasak-accounts",
           "dbus",
+          "systemd",
           "desktop-file-utils",
           "hicolor-icon-theme"
         ],
