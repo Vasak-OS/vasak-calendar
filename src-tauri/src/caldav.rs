@@ -177,7 +177,7 @@ pub fn partir_linea(linea: &str) -> Option<(String, Vec<String>, String)> {
         .filter(|p| !p.is_empty())
         .collect();
 
-    Some((nombre, parametros, derecha[1..].to_string()))
+    Some((nombre, parametros, valor))
 }
 
 /// Devuelve el texto de un valor `TEXT`, deshaciendo lo escapado.

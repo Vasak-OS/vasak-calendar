@@ -1,6 +1,6 @@
 [package]
 name = "vasak-calendar"
-version = "0.6.5"
+version = "0.6.6"
 description = "El calendario de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -33,11 +33,13 @@ tauri-plugin-shell = "2"
 # Para la ventana sin decoración: la barra propia necesita mover y redimensionar.
 gtk = "0.18"
 tauri-plugin-vsk-journal = "2"
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+# El `StreamExt` de los avisos de cambio de zona: zbus 5 ya no lo reexporta.
+futures-util = "0.3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 roxmltree = "0.21"
-base64 = "0.22"
+base64 = "0.23"
 chrono = "0.4"
 # La base de datos de zonas horarias de IANA, compilada adentro del binario.
 # Ver la cabecera de `zonas.rs`: sin esto un evento con `TZID` se mostraba a
