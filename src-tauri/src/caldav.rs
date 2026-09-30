@@ -433,12 +433,14 @@ pub fn components_of(ical: &str) -> Vec<Component> {
             },
             _ => {}
         }
-        if component.exdates.len() + component.rdates.len() > MAX_DATES_PER_COMPONENT
-            && component.unreadable.is_empty()
-        {
-            component.unreadable.push(format!(
-                "tiene más de {MAX_DATES_PER_COMPONENT} fechas sueltas (RDATE, EXDATE)"
-            ));
+        // El tope se aplica siempre, haya o no un error anterior: si no, un
+        // `EXDATE` roto al principio dejaba crecer la lista sin límite.
+        if component.exdates.len() + component.rdates.len() > MAX_DATES_PER_COMPONENT {
+            if component.unreadable.is_empty() {
+                component.unreadable.push(format!(
+                    "tiene más de {MAX_DATES_PER_COMPONENT} fechas sueltas (RDATE, EXDATE)"
+                ));
+            }
             component.exdates.clear();
             component.rdates.clear();
         }
@@ -1579,5 +1581,26 @@ mod tests {
         for status in [200, 207, 301, 401, 404, 500, 503] {
             assert!(!retry_without_expand(status), "{status}");
         }
+    }
+
+    /// Las fechas sueltas tienen tope aunque antes haya un `EXDATE` roto: la
+    /// lista no crece sin límite, y el primer motivo es el que queda.
+    #[test]
+    fn las_fechas_sueltas_tienen_tope_aunque_haya_un_error_antes() {
+        let mut ical = String::from(
+            "BEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260105T100000Z\r\nRRULE:FREQ=DAILY\r\nEXDATE:ayer\r\n",
+        );
+        for day in 0..(MAX_DATES_PER_COMPONENT + 10) {
+            ical.push_str(&format!(
+                "EXDATE:2027{:02}{:02}T100000Z\r\n",
+                day % 12 + 1,
+                day % 28 + 1
+            ));
+        }
+        ical.push_str("END:VEVENT\r\n");
+        let component = &components_of(&ical)[0];
+        assert!(component.exdates.len() <= MAX_DATES_PER_COMPONENT);
+        assert_eq!(component.unreadable.len(), 1);
+        assert!(component.unreadable[0].contains("ayer"));
     }
 }
