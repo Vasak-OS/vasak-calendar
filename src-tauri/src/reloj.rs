@@ -132,7 +132,7 @@ pub fn escuchar(app: tauri::AppHandle) {
 }
 
 async fn seguir(app: &tauri::AppHandle) -> Result<(), String> {
-    use zbus::export::futures_util::StreamExt;
+    use futures_util::StreamExt;
 
     let conexion = zbus::Connection::system()
         .await
