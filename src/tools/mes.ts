@@ -79,16 +79,27 @@ export interface Dia {
 	esHoy: boolean;
 }
 
-/** Un evento tal como llega del programa. */
-export interface Evento {
+/**
+ * Un evento tal como llega del programa: una instancia, si es de una serie.
+ *
+ * Los nombres vienen del programa tal cual —Tauri no los convierte—, así que
+ * son los de `Event` y `EventInCalendar` en `src-tauri/src`.
+ */
+export interface CalendarEvent {
 	uid: string;
-	titulo: string;
+	title: string;
 	/** ISO 8601, en UTC. */
-	inicio: string;
-	fin: string;
-	/** Los nombres vienen del programa tal cual: Tauri no los convierte. */
-	todo_el_dia: boolean;
-	se_repite: boolean;
+	start: string;
+	end: string;
+	all_day: boolean;
+	/** Si es una instancia de una serie. */
+	recurring: boolean;
+	/**
+	 * Si es una serie que no se pudo expandir y se muestra sólo el día que
+	 * empieza: la regla no se entendió, y antes que inventar fechas se muestra
+	 * una vez y se dice.
+	 */
+	shown_once: boolean;
 	/**
 	 * La zona en la que lo escribieron, tal como venía en el archivo.
 	 *
@@ -96,8 +107,8 @@ export interface Evento {
 	 * ninguna. Sirve para avisar cuando un evento está escrito en una zona
 	 * distinta de aquella en la que se está mirando la agenda.
 	 */
-	zona: string;
-	calendario: string;
+	zone: string;
+	calendar: string;
 	color: string | null;
 }
 
@@ -165,8 +176,12 @@ export function rangoDe(dias: Dia[], zona: string): { desde: string; hasta: stri
  * qué celda cae cada punta y se recorre el pedazo de la cuadrícula que hay entre
  * las dos, así que ningún evento da más de 42 vueltas.
  */
-export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string, Evento[]> {
-	const mapa = new Map<string, Evento[]>();
+export function eventsByDay(
+	events: CalendarEvent[],
+	dias: Dia[],
+	zona: string
+): Map<string, CalendarEvent[]> {
+	const mapa = new Map<string, CalendarEvent[]>();
 	if (dias.length === 0) {
 		return mapa;
 	}
@@ -174,12 +189,12 @@ export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string
 	const primeraClave = dias[0].clave;
 	const ultimaClave = dias[dias.length - 1].clave;
 
-	for (const evento of eventos) {
-		const inicio = new Date(evento.inicio);
+	for (const event of events) {
+		const inicio = new Date(event.start);
 		if (Number.isNaN(inicio.getTime())) {
 			continue;
 		}
-		const fin = new Date(evento.fin);
+		const fin = new Date(event.end);
 
 		// **Un evento de día completo no tiene zona, y por eso se lee en UTC.**
 		//
@@ -189,7 +204,7 @@ export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string
 		// y el evento aparecía **un día antes**. El feriado del 15 caía el 14 para
 		// medio mundo, en silencio, que es exactamente el error que este archivo
 		// existe para no cometer.
-		const suya = evento.todo_el_dia ? 'UTC' : zona;
+		const suya = event.all_day ? 'UTC' : zona;
 
 		// El último día que ocupa.
 		//
@@ -221,9 +236,9 @@ export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string
 			const clave = dias[i].clave;
 			const delDia = mapa.get(clave);
 			if (delDia) {
-				delDia.push(evento);
+				delDia.push(event);
 			} else {
-				mapa.set(clave, [evento]);
+				mapa.set(clave, [event]);
 			}
 		}
 	}
@@ -233,10 +248,10 @@ export function porDia(eventos: Evento[], dias: Dia[], zona: string): Map<string
 	// servidor, que no sigue ningún criterio útil.
 	for (const delDia of mapa.values()) {
 		delDia.sort((a, b) => {
-			if (a.todo_el_dia !== b.todo_el_dia) {
-				return a.todo_el_dia ? -1 : 1;
+			if (a.all_day !== b.all_day) {
+				return a.all_day ? -1 : 1;
 			}
-			return a.inicio.localeCompare(b.inicio);
+			return a.start.localeCompare(b.start);
 		});
 	}
 

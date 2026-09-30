@@ -8,6 +8,7 @@ mod comandos;
 mod cuentas;
 mod dav;
 mod locales;
+mod recurrence;
 mod reloj;
 mod ventana;
 mod zonas;
@@ -37,7 +38,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             comandos::listar_cuentas,
-            comandos::eventos_de_la_cuenta,
+            comandos::account_events,
             reloj::zona_del_sistema,
         ])
         // El aviso de que la máquina cambió de huso. Va acá y no en la ventana

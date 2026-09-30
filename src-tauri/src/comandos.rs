@@ -14,9 +14,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use tauri_plugin_vsk_journal::DiarioExt;
 
-use crate::caldav::{self, Calendario, Evento};
+use crate::caldav::{self, Calendario, Event};
 use crate::cuentas::{self, CuentaConCalendario};
+use crate::recurrence::Window;
 
 /// Un evento y de qué calendario salió.
 ///
@@ -24,10 +26,10 @@ use crate::cuentas::{self, CuentaConCalendario};
 /// cuadrícula: sin eso, dos reuniones del mismo día se ven idénticas aunque una
 /// sea del trabajo y la otra de casa.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct EventoEnCalendario {
+pub struct EventInCalendar {
     #[serde(flatten)]
-    pub evento: Evento,
-    pub calendario: String,
+    pub event: Event,
+    pub calendar: String,
     pub color: Option<String>,
 }
 
@@ -35,7 +37,7 @@ pub struct EventoEnCalendario {
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
 pub struct LecturaDeCuenta {
     pub calendarios: Vec<Calendario>,
-    pub eventos: Vec<EventoEnCalendario>,
+    pub eventos: Vec<EventInCalendar>,
     /// Los calendarios que no se pudieron leer, con el motivo. Vacío si salió
     /// todo bien.
     pub fallos: Vec<String>,
@@ -51,17 +53,24 @@ pub async fn listar_cuentas() -> Result<Vec<CuentaConCalendario>, String> {
     cuentas::cuentas().await
 }
 
-/// Los eventos de una cuenta entre dos momentos.
+/// Los eventos de una cuenta entre dos momentos, con las series expandidas.
 ///
-/// `desde` y `hasta` llegan en ISO 8601 desde la ventana, que es quien sabe qué
+/// `from` y `to` llegan en ISO 8601 desde la ventana, que es quien sabe qué
 /// mes está mirando y en qué zona horaria vive la persona.
+///
+/// Lo que no se pudo expandir va al diario del sistema con el motivo, y no a
+/// la ventana: el evento ya sale marcado con `shown_once`, que es lo que la
+/// persona necesita ver, y la regla que no se entendió es para quien lo
+/// investigue.
 #[tauri::command]
-pub async fn eventos_de_la_cuenta(
+pub async fn account_events<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     account_id: String,
-    desde: String,
-    hasta: String,
+    from: String,
+    to: String,
 ) -> Result<LecturaDeCuenta, String> {
-    let (desde, hasta) = rango(&desde, &hasta)?;
+    let (start, end) = rango(&from, &to)?;
+    let window = Window { start, end };
 
     let credencial = cuentas::credencial_de(&account_id).await?;
     let calendarios = caldav::calendarios(&credencial).await?;
@@ -72,13 +81,17 @@ pub async fn eventos_de_la_cuenta(
     };
 
     for calendario in &calendarios {
-        match caldav::eventos(&credencial, &calendario.url, desde, hasta).await {
-            Ok(eventos) => {
+        match caldav::events(&credencial, &calendario.url, window).await {
+            Ok(expansion) => {
+                for note in &expansion.notes {
+                    app.diario()
+                        .informacion(&format!("{}: {note}", calendario.nombre));
+                }
                 lectura
                     .eventos
-                    .extend(eventos.into_iter().map(|evento| EventoEnCalendario {
-                        evento,
-                        calendario: calendario.url.clone(),
+                    .extend(expansion.events.into_iter().map(|event| EventInCalendar {
+                        event,
+                        calendar: calendario.url.clone(),
                         color: calendario.color.clone(),
                     }))
             }
@@ -150,25 +163,39 @@ mod tests {
     /// una sea del trabajo y la otra de casa.
     #[test]
     fn el_evento_sale_con_su_calendario() {
-        let evento = EventoEnCalendario {
-            evento: Evento {
+        let evento = EventInCalendar {
+            event: Event {
                 uid: "a".into(),
-                titulo: "Reunión".into(),
-                inicio: "2026-09-15T14:00:00+00:00".into(),
-                fin: "2026-09-15T15:00:00+00:00".into(),
-                todo_el_dia: false,
-                se_repite: false,
-                zona: "Europe/Madrid".into(),
+                title: "Reunión".into(),
+                start: "2026-09-15T14:00:00+00:00".into(),
+                end: "2026-09-15T15:00:00+00:00".into(),
+                all_day: false,
+                recurring: true,
+                shown_once: false,
+                zone: "Europe/Madrid".into(),
             },
-            calendario: "https://nube.ejemplo.com/dav/calendars/ana/trabajo/".into(),
+            calendar: "https://nube.ejemplo.com/dav/calendars/ana/trabajo/".into(),
             color: Some("#FF5733".into()),
         };
 
         let json = serde_json::to_value(&evento).unwrap();
         // Aplanado: la ventana recibe un objeto y no un evento adentro de otro.
-        assert_eq!(json["titulo"], "Reunión");
+        assert_eq!(json["title"], "Reunión");
         assert_eq!(json["color"], "#FF5733");
-        assert!(json["calendario"].as_str().unwrap().ends_with("/trabajo/"));
+        assert!(json["calendar"].as_str().unwrap().ends_with("/trabajo/"));
+        // Los nombres que lee `src/tools/mes.ts`, tal cual: Tauri no los
+        // convierte, y uno que no coincide llega como `undefined` sin error.
+        for campo in [
+            "uid",
+            "start",
+            "end",
+            "all_day",
+            "recurring",
+            "shown_once",
+            "zone",
+        ] {
+            assert!(json.get(campo).is_some(), "falta {campo}: {json}");
+        }
     }
 
     /// Un calendario roto no puede vaciar el mes: la persona tiene que ver los

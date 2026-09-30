@@ -1,6 +1,6 @@
 [package]
 name = "vasak-calendar"
-version = "0.6.6"
+version = "0.7.0"
 description = "El calendario de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -45,6 +45,7 @@ chrono = "0.4"
 # Ver la cabecera de `zonas.rs`: sin esto un evento con `TZID` se mostraba a
 # la hora equivocada. No agrega ninguna biblioteca compartida al paquete.
 chrono-tz = "0.10"
+rrule = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 # Sólo para el test que valida los catálogos de idioma: el plugin los parsea en

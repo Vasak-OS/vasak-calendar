@@ -1,0 +1,70 @@
+<?xml version='1.0' encoding='utf-8'?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><response><href>/ana/personal/semanal.ics</href><propstat><prop><getetag>"209379a06490c0ec1cb8bc98c676e0687f28c814e1eefc077c5b55421cd1c00b"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Mozilla.org/NONSGML Mozilla Calendar V1.1//EN
+BEGIN:VEVENT
+UID:semanal-madrid@vasak.test
+RECURRENCE-ID:20261006T080000Z
+DTSTART:20261006T080000Z
+DTEND:20261006T090000Z
+DTSTAMP:20260901T120000Z
+SUMMARY:Reunión de equipo
+END:VEVENT
+BEGIN:VEVENT
+UID:semanal-madrid@vasak.test
+RECURRENCE-ID:20261020T080000Z
+DTSTART:20261021T100000Z
+DTEND:20261021T110000Z
+DTSTAMP:20260901T120000Z
+SUMMARY:Reunión de equipo (movida)
+END:VEVENT
+BEGIN:VEVENT
+UID:semanal-madrid@vasak.test
+RECURRENCE-ID:20261027T090000Z
+DTSTART:20261027T090000Z
+DTEND:20261027T100000Z
+DTSTAMP:20260901T120000Z
+SUMMARY:Reunión de equipo
+END:VEVENT
+BEGIN:VEVENT
+UID:semanal-madrid@vasak.test
+RECURRENCE-ID:20261103T090000Z
+DTSTART:20261103T090000Z
+DTEND:20261103T100000Z
+DTSTAMP:20260901T120000Z
+STATUS:CANCELLED
+SUMMARY:Reunión de equipo
+END:VEVENT
+BEGIN:VEVENT
+UID:semanal-madrid@vasak.test
+RECURRENCE-ID:20261110T090000Z
+DTSTART:20261110T090000Z
+DTEND:20261110T100000Z
+DTSTAMP:20260901T120000Z
+SUMMARY:Reunión de equipo
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/ana/personal/cumple.ics</href><propstat><prop><getetag>"d8c34fdda18d61d2740106d71c9f13129f7f8a8457f28e43604b11d336c51f48"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Vasak//test//ES
+BEGIN:VEVENT
+UID:cumple@vasak.test
+RECURRENCE-ID:20261015
+DTSTART;VALUE=DATE:20261015
+DTEND;VALUE=DATE:20261016
+DTSTAMP:20260901T120000Z
+SUMMARY:Cumpleaños de Ana
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/ana/personal/suelto.ics</href><propstat><prop><getetag>"38416b01277e01e1f132abbfb9a569a14efca547fab658752bb4c8fa1648a551"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Vasak//test//ES
+BEGIN:VEVENT
+UID:suelto@vasak.test
+DTSTART:20261009T140000Z
+DTEND:20261009T150000Z
+DTSTAMP:20260901T120000Z
+SUMMARY:Dentista
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>

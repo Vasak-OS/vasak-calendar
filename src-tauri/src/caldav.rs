@@ -11,13 +11,16 @@
 //! esta aplicación corre con la cuenta de la persona y no como root, igual que
 //! el bucle de correo — y por eso el parseo tiene topes y no confía en nada.
 //!
-//! ── Lo que **no** hace todavía ──────────────────────────────────────────────
+//! ── Los eventos que se repiten ──────────────────────────────────────────────
 //!
-//! No expande repeticiones. Un evento con `RRULE` se muestra una vez, el día que
-//! empieza, y no en cada repetición. Hacerlo bien es su propio trabajo —hay
-//! excepciones, fechas que se corren, zonas horarias que cambian en el medio— y
-//! hacerlo mal es peor que no hacerlo: un calendario que muestra una reunión el
-//! día equivocado es peor que uno que no la muestra.
+//! Por dos caminos, y se toman los dos. Primero se le pide al servidor que los
+//! expanda —`<c:expand>` en la consulta, RFC 4791 §9.6.5—, que es lo barato:
+//! Nextcloud, Radicale y Google lo hacen, y devuelven una instancia por
+//! repetición, cada una con su `RECURRENCE-ID` y sin la regla. Pero no todos
+//! lo respetan, y el que no lo respeta **no avisa**: devuelve el evento con su
+//! `RRULE`, igual que si no se le hubiera pedido nada. Así que no se le cree
+//! al pedido sino a la respuesta: si trae una regla, se expande acá, con
+//! [`crate::recurrence`]. Ver [`server_expansion`].
 //!
 //! ── Qué se le cree al servidor ──────────────────────────────────────────────
 //!
@@ -34,12 +37,15 @@
 use std::time::Duration;
 
 use base64::Engine;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use reqwest::Url;
 use serde::Serialize;
 
 use crate::cuentas::{AuthKind, Credencial};
 use crate::dav::{self, DavError, Limits};
+use crate::recurrence::{
+    duration_of, Component, Expansion, Length, Moment, RDate, Window, MAX_DATES_PER_COMPONENT,
+};
 use crate::zonas::{Zona, Zonas};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -69,20 +75,28 @@ pub struct Calendario {
     pub color: Option<String>,
 }
 
-/// Un evento, ya listo para mostrar.
+/// Un evento, ya listo para mostrar: una instancia, si es de una serie.
+///
+/// Los nombres viajan tal cual a la ventana —Tauri no los convierte—, así que
+/// cambiar uno acá es cambiarlo en `src/tools/mes.ts`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Evento {
+pub struct Event {
     pub uid: String,
-    pub titulo: String,
+    pub title: String,
     /// Cuándo empieza, en UTC y en ISO 8601. La ventana lo pasa a la hora local.
-    pub inicio: String,
-    pub fin: String,
+    pub start: String,
+    pub end: String,
     /// Si dura todo el día. Se guarda aparte porque un evento de día completo no
     /// tiene hora, y mostrarle una —la medianoche de alguna zona— lo correría de
     /// día para quien esté en otra.
-    pub todo_el_dia: bool,
-    /// Si se repite. Se muestra una sola vez; ver la nota del módulo.
-    pub se_repite: bool,
+    pub all_day: bool,
+    /// Si es una instancia de una serie.
+    pub recurring: bool,
+    /// Si es una serie que **no se pudo expandir** y se muestra sólo el día que
+    /// empieza. Ver [`crate::recurrence`]: ante una regla que no se entiende no
+    /// se inventan fechas, y la ventana lo dice para que las otras semanas no
+    /// parezcan libres.
+    pub shown_once: bool,
     /// La zona en la que lo escribieron, tal como venía en el archivo.
     ///
     /// Vacía cuando el evento venía en UTC, cuando es de día completo o cuando
@@ -90,7 +104,10 @@ pub struct Evento {
     /// **mostrar**: la ventana avisa cuando un evento está escrito en una zona
     /// distinta de aquella en la que se está mirando la agenda, y para eso hace
     /// falta el nombre que le puso quien lo escribió.
-    pub zona: String,
+    ///
+    /// Un servidor que expande devuelve las instancias en UTC y sin zona, así
+    /// que en ese camino queda vacía.
+    pub zone: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +237,7 @@ pub fn texto_de(valor: &str) -> String {
         .collect()
 }
 
-/// Interpreta una fecha de iCalendar.
+/// Interpreta una fecha de iCalendar, sin resolverla todavía.
 ///
 /// Cuatro formas, y cada una quiere decir algo distinto:
 ///
@@ -233,39 +250,77 @@ pub fn texto_de(valor: &str) -> String {
 /// - `20260915T140000` a secas — **hora local flotante**: «las dos de donde
 ///   estés». Se toma la zona de la sesión.
 ///
-/// Las últimas dos se trataban como UTC, y eso quería decir que una reunión de
-/// las 14:00 en Buenos Aires se mostraba a las 11:00.
-pub fn fecha_de(
-    valor: &str,
-    parametros: &[String],
-    zonas: &Zonas,
-) -> Option<(DateTime<Utc>, bool)> {
-    let es_dia_completo = parametros
+/// Sin resolver porque una serie se expande en la hora de pared: ver
+/// [`crate::recurrence`].
+pub fn moment_of(value: &str, parameters: &[String], zones: &Zonas) -> Option<Moment> {
+    let value = value.trim();
+    let is_date = parameters
         .iter()
         .any(|p| p.eq_ignore_ascii_case("VALUE=DATE"));
 
-    if es_dia_completo || valor.len() == 8 {
-        let dia = NaiveDate::parse_from_str(valor, "%Y%m%d").ok()?;
-        let momento = dia.and_hms_opt(0, 0, 0)?;
-        return Some((Utc.from_utc_datetime(&momento), true));
+    if is_date || value.len() == 8 {
+        return NaiveDate::parse_from_str(value, "%Y%m%d")
+            .ok()
+            .map(Moment::Date);
     }
 
-    let local =
-        NaiveDateTime::parse_from_str(valor.strip_suffix('Z').unwrap_or(valor), "%Y%m%dT%H%M%S")
+    let wall =
+        NaiveDateTime::parse_from_str(value.strip_suffix('Z').unwrap_or(value), "%Y%m%dT%H%M%S")
             .ok()?;
 
     // La `Z` manda sobre cualquier `TZID`: una fecha en UTC ya es un instante, y
     // un `TZID` al lado es un archivo mal escrito, no otra interpretación.
-    let zona = if valor.ends_with('Z') {
+    let zone = if value.ends_with('Z') {
         Zona::Utc
     } else {
-        match tzid_de(parametros) {
-            Some(tzid) => zonas.resolver(tzid),
+        match tzid_de(parameters) {
+            Some(tzid) => zones.resolver(tzid),
             None => Zona::Flotante,
         }
     };
+    Some(Moment::Time { wall, zone })
+}
 
-    zona.a_utc(local).map(|momento| (momento, false))
+/// Una lista de fechas de `EXDATE` o `RDATE`, separadas por coma.
+///
+/// Todas o ninguna: una que no se entiende en la lista puede ser justo la
+/// reunión que se suspendió, y seguir sin ella mostraría esa reunión.
+fn moments_of(value: &str, parameters: &[String], zones: &Zonas) -> Option<Vec<Moment>> {
+    value
+        .split(',')
+        .map(|item| moment_of(item, parameters, zones))
+        .collect()
+}
+
+/// Las fechas de un `RDATE`, que además de fechas pueden ser periodos
+/// (`VALUE=PERIOD`, RFC 5545 §3.3.9): `inicio/fin` o `inicio/duración`.
+fn rdates_of(value: &str, parameters: &[String], zones: &Zonas) -> Option<Vec<RDate>> {
+    value
+        .split(',')
+        .map(|item| match item.split_once('/') {
+            None => Some(RDate {
+                start: moment_of(item, parameters, zones)?,
+                length: None,
+            }),
+            Some((start, rest)) => {
+                let start = moment_of(start, parameters, zones)?;
+                let length = if rest.trim_start().starts_with(['P', 'p', '+', '-']) {
+                    duration_of(rest)?
+                } else {
+                    let end = moment_of(rest, parameters, zones)?.to_utc()?;
+                    let begin = start.to_utc()?;
+                    (end > begin).then(|| Length {
+                        days: 0,
+                        exact: end - begin,
+                    })?
+                };
+                Some(RDate {
+                    start,
+                    length: Some(length),
+                })
+            }
+        })
+        .collect()
 }
 
 /// El `TZID` de los parámetros de una línea, si lo trae, sin comillas.
@@ -279,17 +334,17 @@ pub fn tzid_de(parametros: &[String]) -> Option<&str> {
     })
 }
 
-/// Saca los eventos de un iCalendar.
+/// Lee los `VEVENT` de un iCalendar, sin expandir.
 ///
 /// Sólo `VEVENT`: un calendario trae también tareas y notas, y mostrarlas como
 /// si fueran eventos llenaría el mes de cosas que no lo son.
 ///
 /// Las zonas se leen **antes** y en una pasada aparte: un `VTIMEZONE` puede
 /// venir después del evento que lo usa, y el formato no fija el orden.
-pub fn eventos_de(ical: &str) -> Vec<Evento> {
-    let zonas = crate::zonas::tabla_de(ical);
-    let mut eventos = Vec::new();
-    let mut actual: Option<EventoCrudo> = None;
+pub fn components_of(ical: &str) -> Vec<Component> {
+    let zones = crate::zonas::tabla_de(ical);
+    let mut components = Vec::new();
+    let mut current: Option<Component> = None;
     // Cuántos componentes hay abiertos **dentro** del evento.
     //
     // Un `VEVENT` puede contener otro componente, y el que aparece siempre es
@@ -297,129 +352,173 @@ pub fn eventos_de(ical: &str) -> Vec<Evento> {
     // o el texto que le puso el cliente que lo creó. Sin contar la anidación,
     // esa línea pisaba el título del evento, y en la cuadrícula el mes entero
     // aparecía lleno de recordatorios en vez de reuniones.
-    let mut anidado = 0usize;
+    let mut nested = 0usize;
 
-    for linea in unir_lineas(ical) {
-        let Some((nombre, parametros, valor)) = partir_linea(&linea) else {
+    for line in unir_lineas(ical) {
+        let Some((name, parameters, value)) = partir_linea(&line) else {
             continue;
         };
 
-        match (nombre.as_str(), valor.trim()) {
+        match (name.as_str(), value.trim()) {
             ("BEGIN", "VEVENT") => {
-                actual = Some(EventoCrudo::default());
-                anidado = 0;
+                current = Some(Component::default());
+                nested = 0;
                 continue;
             }
             ("END", "VEVENT") => {
-                if let Some(crudo) = actual.take() {
-                    if let Some(evento) = crudo.terminar() {
-                        eventos.push(evento);
-                    }
+                if let Some(component) = current.take() {
+                    components.push(component);
                 }
-                anidado = 0;
+                nested = 0;
                 continue;
             }
             // Cualquier otro componente abierto acá adentro es de otro: se
             // cuenta para saltearlo entero, sin mirar qué trae.
-            ("BEGIN", _) if actual.is_some() => {
-                anidado += 1;
+            ("BEGIN", _) if current.is_some() => {
+                nested += 1;
                 continue;
             }
-            ("END", _) if actual.is_some() => {
-                anidado = anidado.saturating_sub(1);
+            ("END", _) if current.is_some() => {
+                nested = nested.saturating_sub(1);
                 continue;
             }
             _ => {}
         }
 
-        if anidado > 0 {
+        if nested > 0 {
             continue;
         }
-        let Some(crudo) = actual.as_mut() else {
+        let Some(component) = current.as_mut() else {
             continue;
         };
 
-        match nombre.as_str() {
-            "UID" => crudo.uid = Some(valor),
-            "SUMMARY" => crudo.titulo = Some(texto_de(&valor)),
+        match name.as_str() {
+            "UID" => component.uid = value,
+            "SUMMARY" => component.title = texto_de(&value),
             "DTSTART" => {
-                crudo.inicio = fecha_de(&valor, &parametros, &zonas);
+                component.start = moment_of(&value, &parameters, &zones);
                 // La del comienzo y no la del fin: es la que la persona lee
                 // cuando mira a qué hora empieza algo.
-                crudo.zona = (!valor.ends_with('Z'))
-                    .then(|| tzid_de(&parametros))
+                component.zone_name = (!value.trim().ends_with('Z'))
+                    .then(|| tzid_de(&parameters))
                     .flatten()
                     .unwrap_or_default()
                     .to_string();
             }
-            "DTEND" => crudo.fin = fecha_de(&valor, &parametros, &zonas),
-            "RRULE" => crudo.se_repite = true,
+            "DTEND" => component.end = moment_of(&value, &parameters, &zones),
+            "DURATION" => component.duration = duration_of(&value),
+            "RRULE" => component.rules.push(value),
+            "STATUS" => component.cancelled = value.trim().eq_ignore_ascii_case("CANCELLED"),
+            "RECURRENCE-ID" => {
+                component.recurrence_id = moment_of(&value, &parameters, &zones);
+                component.this_and_future = parameters
+                    .iter()
+                    .any(|p| p.eq_ignore_ascii_case("RANGE=THISANDFUTURE"));
+                // Una instancia cambiada que no dice cuál reemplaza no se
+                // puede ubicar: se muestra igual —es un dato explícito—, pero
+                // sin que tape a ninguna, y sin pasar por principal.
+                component.unplaced_override = component.recurrence_id.is_none();
+            }
+            "EXDATE" => match moments_of(&value, &parameters, &zones) {
+                Some(dates) => component.exdates.extend(dates),
+                None => component
+                    .unreadable
+                    .push(format!("EXDATE «{value}» no se entiende")),
+            },
+            "RDATE" => match rdates_of(&value, &parameters, &zones) {
+                Some(dates) => component.rdates.extend(dates),
+                None => component
+                    .unreadable
+                    .push(format!("RDATE «{value}» no se entiende")),
+            },
             _ => {}
+        }
+        // El tope se aplica siempre, haya o no un error anterior: si no, un
+        // `EXDATE` roto al principio dejaba crecer la lista sin límite.
+        if component.exdates.len() + component.rdates.len() > MAX_DATES_PER_COMPONENT {
+            if component.unreadable.is_empty() {
+                component.unreadable.push(format!(
+                    "tiene más de {MAX_DATES_PER_COMPONENT} fechas sueltas (RDATE, EXDATE)"
+                ));
+            }
+            component.exdates.clear();
+            component.rdates.clear();
         }
     }
 
-    eventos
+    components
 }
 
-#[derive(Default)]
-struct EventoCrudo {
-    uid: Option<String>,
-    titulo: Option<String>,
-    inicio: Option<(DateTime<Utc>, bool)>,
-    fin: Option<(DateTime<Utc>, bool)>,
-    se_repite: bool,
-    zona: String,
+/// Qué hizo el servidor con el `<c:expand>` que se le pidió.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerExpansion {
+    /// Devolvió las instancias: ninguna regla, y al menos un `RECURRENCE-ID`.
+    Honored,
+    /// Devolvió al menos un evento con su `RRULE` o su `RDATE`: no expandió, y
+    /// esas series se expanden acá.
+    Ignored,
+    /// No había nada que se repitiera, así que no se sabe.
+    NotNeeded,
 }
 
-impl EventoCrudo {
-    fn terminar(self) -> Option<Evento> {
-        // Sin comienzo no hay dónde ponerlo en el mes, así que no se muestra. El
-        // estándar lo exige, pero un servidor puede mandar cualquier cosa.
-        let (inicio, todo_el_dia) = self.inicio?;
-        // Sin fin, dura lo que el estándar dice: un día si es de día completo, y
-        // nada si tiene hora. Inventar una hora de fin mostraría una barra que
-        // no corresponde.
-        let fin = self.fin.map(|(f, _)| f).unwrap_or(if todo_el_dia {
-            inicio + chrono::Duration::days(1)
-        } else {
-            inicio
-        });
-
-        Some(Evento {
-            uid: self.uid.unwrap_or_default(),
-            // Un evento sin título existe: se muestra vacío y no se descarta,
-            // porque ocupa lugar en el día de la persona igual.
-            titulo: self.titulo.unwrap_or_default(),
-            inicio: inicio.to_rfc3339(),
-            fin: fin.to_rfc3339(),
-            todo_el_dia,
-            se_repite: self.se_repite,
-            // Un evento de día completo no tiene hora, así que no tiene zona,
-            // aunque el archivo le haya puesto una.
-            zona: if todo_el_dia {
-                String::new()
-            } else {
-                self.zona
-            },
-        })
+/// Mira la respuesta, y no el pedido, para saber si el servidor expandió.
+///
+/// Un servidor que no conoce `<c:expand>` no contesta con un error: lo ignora
+/// y devuelve el evento con su regla, igual que sin pedirlo. Y uno que expande
+/// **quita** la regla y deja un `VEVENT` por instancia, cada uno con su
+/// `RECURRENCE-ID`. Así que la regla presente es la señal, y no hace falta
+/// saber qué servidor es.
+///
+/// No hace falta para **mostrar** bien —[`crate::recurrence::expand`] trata
+/// igual las dos respuestas—: es para dejar en el diario qué servidores no lo
+/// respetan.
+pub fn server_expansion(components: &[Component]) -> ServerExpansion {
+    let series = components
+        .iter()
+        .any(|c| c.recurrence_id.is_none() && (!c.rules.is_empty() || !c.rdates.is_empty()));
+    if series {
+        ServerExpansion::Ignored
+    } else if components.iter().any(|c| c.recurrence_id.is_some()) {
+        ServerExpansion::Honored
+    } else {
+        ServerExpansion::NotNeeded
     }
 }
 
 /// El cuerpo de la consulta que pide los eventos de un rango.
-pub fn consulta_de_eventos(desde: &str, hasta: &str) -> String {
+///
+/// Con `expand`, le pide al servidor las instancias ya expandidas en ese mismo
+/// rango (RFC 4791 §9.6.5). Sin él, los eventos como están guardados.
+pub fn events_query(from: &str, to: &str, expand: bool) -> String {
+    let data = if expand {
+        format!(r#"<c:calendar-data><c:expand start="{from}" end="{to}"/></c:calendar-data>"#)
+    } else {
+        "<c:calendar-data/>".to_string()
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="{NS_CALDAV}">
-  <d:prop><d:getetag/><c:calendar-data/></d:prop>
+  <d:prop><d:getetag/>{data}</d:prop>
   <c:filter>
     <c:comp-filter name="VCALENDAR">
       <c:comp-filter name="VEVENT">
-        <c:time-range start="{desde}" end="{hasta}"/>
+        <c:time-range start="{from}" end="{to}"/>
       </c:comp-filter>
     </c:comp-filter>
   </c:filter>
 </c:calendar-query>"#
     )
+}
+
+/// Si un rechazo del servidor puede ser por el `<c:expand>`, y vale la pena
+/// volver a pedir sin él.
+///
+/// Lo normal es que un servidor que no lo conoce lo ignore, pero el RFC le
+/// deja contestar que no lo soporta: `403` con una precondición, o un `400`,
+/// `415`, `422` o `501` de los que no leen el cuerpo con cuidado. Un `401`
+/// no: es la credencial, y pedir otra vez no la arregla.
+pub fn retry_without_expand(status: u16) -> bool {
+    matches!(status, 400 | 403 | 415 | 422 | 501)
 }
 
 /// El formato de fecha que espera un `time-range`: siempre UTC y sin guiones.
@@ -648,7 +747,8 @@ pub async fn calendarios(
         .map_err(|e| e.to_string())
 }
 
-/// Los eventos de un calendario entre dos momentos.
+/// Los eventos de un calendario entre dos momentos, con las series ya
+/// expandidas.
 ///
 /// **La dirección se compara con la de la cuenta antes de mandar nada.** Viene
 /// de la ventana —o sea, de un proceso de la sesión—, y el `Authorization` va en
@@ -656,39 +756,76 @@ pub async fn calendarios(
 /// lleva la credencial de la cuenta a otro servidor. `calendarios_de` ya
 /// descarta los que no son del mismo origen; esto es para el caso de que se pida
 /// uno que no vino de la lista.
-pub async fn eventos(
+///
+/// Primero con `<c:expand>`; si el servidor lo rechaza, otra vez sin él. Y
+/// expanda o no, la respuesta pasa por [`crate::recurrence::expand`], que deja
+/// las instancias que ya vinieron como están y expande las series que no.
+pub async fn events(
     credencial: &crate::cuentas::Credencial,
     calendario: &str,
-    desde: DateTime<Utc>,
-    hasta: DateTime<Utc>,
-) -> Result<Vec<Evento>, String> {
+    window: Window,
+) -> Result<Expansion, String> {
     let home = direccion_de(credencial)?;
     let pedido = dav::resolve_href(&home, calendario).map_err(|e| e.to_string())?;
     if pedido.origin() != home.origin() {
         return Err(DavError::ForeignOrigin.to_string());
     }
 
-    let respuesta = cliente()?
-        .request(metodo("REPORT"), pedido)
-        .header("Authorization", cabecera_de(credencial))
-        // 1: los eventos de este calendario. El estándar lo pide para una
-        // consulta de calendario, y hay servidores que sin esto devuelven vacío.
-        .header("Depth", "1")
-        .header("Content-Type", "application/xml; charset=utf-8")
-        .body(consulta_de_eventos(
-            &momento_caldav(desde),
-            &momento_caldav(hasta),
-        ))
-        .send()
-        .await
-        .map_err(|e| DavError::network(e.without_url()).to_string())?;
+    let (from, to) = (momento_caldav(window.start), momento_caldav(window.end));
+    let report = |expand: bool| {
+        let body = events_query(&from, &to, expand);
+        let pedido = pedido.clone();
+        async move {
+            cliente()?
+                .request(metodo("REPORT"), pedido)
+                .header("Authorization", cabecera_de(credencial))
+                // 1: los eventos de este calendario. El estándar lo pide para
+                // una consulta de calendario, y hay servidores que sin esto
+                // devuelven vacío.
+                .header("Depth", "1")
+                .header("Content-Type", "application/xml; charset=utf-8")
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| DavError::network(e.without_url()).to_string())
+        }
+    };
+
+    let mut notes = Vec::new();
+    let mut respuesta = report(true).await?;
+    if retry_without_expand(respuesta.status().as_u16()) {
+        notes.push(format!(
+            "el servidor rechazó <c:expand> con {}; se pide sin expandir",
+            respuesta.status().as_u16()
+        ));
+        respuesta = report(false).await?;
+    }
 
     let xml = cuerpo_con_tope(respuesta).await?;
-    let bloques = dav::off_runtime(move || ical_de_respuesta(&xml))
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut expansion = dav::off_runtime(move || -> Result<Expansion, DavError> {
+        let mut expansion = Expansion::default();
+        let mut ignored = false;
+        for block in ical_de_respuesta(&xml)? {
+            let components = components_of(&block);
+            ignored |= server_expansion(&components) == ServerExpansion::Ignored;
+            let part = crate::recurrence::expand(components, &window);
+            expansion.events.extend(part.events);
+            expansion.notes.extend(part.notes);
+        }
+        if ignored {
+            expansion.notes.insert(
+                0,
+                "el servidor no expandió las repeticiones; se expanden acá".into(),
+            );
+        }
+        Ok(expansion)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    Ok(bloques.iter().flat_map(|ical| eventos_de(ical)).collect())
+    notes.append(&mut expansion.notes);
+    expansion.notes = notes;
+    Ok(expansion)
 }
 
 fn metodo(nombre: &str) -> reqwest::Method {
@@ -698,6 +835,38 @@ fn metodo(nombre: &str) -> reqwest::Method {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    /// Un rango que abarca todo lo que usan estas pruebas.
+    fn wide_window() -> Window {
+        Window {
+            start: Utc.with_ymd_and_hms(1990, 1, 1, 0, 0, 0).unwrap(),
+            end: Utc.with_ymd_and_hms(2100, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    /// Los eventos de un iCalendar que se ven en el rango, con las series ya
+    /// expandidas: lo mismo que hace [`events`] con cada bloque.
+    fn events_in(ical: &str, window: &Window) -> Expansion {
+        crate::recurrence::expand(components_of(ical), window)
+    }
+
+    fn all_events(ical: &str) -> Vec<Event> {
+        events_in(ical, &wide_window()).events
+    }
+
+    /// Una fecha de iCalendar como instante, y si es de día completo.
+    ///
+    /// Las dos formas con hora local se trataban como UTC, y eso quería decir que
+    /// una reunión de las 14:00 en Buenos Aires se mostraba a las 11:00.
+    fn instant_of(
+        value: &str,
+        parameters: &[String],
+        zones: &Zonas,
+    ) -> Option<(DateTime<Utc>, bool)> {
+        let moment = moment_of(value, parameters, zones)?;
+        Some((moment.to_utc()?, moment.is_date()))
+    }
 
     fn credencial(auth: AuthKind) -> Credencial {
         Credencial {
@@ -816,17 +985,18 @@ mod tests {
     #[test]
     fn una_fecha_sin_hora_es_de_dia_completo() {
         let (momento, todo_el_dia) =
-            fecha_de("20260915", &["VALUE=DATE".into()], &Zonas::default()).unwrap();
+            instant_of("20260915", &["VALUE=DATE".into()], &Zonas::default()).unwrap();
         assert!(todo_el_dia);
         assert_eq!(momento.to_rfc3339(), "2026-09-15T00:00:00+00:00");
 
         // Y también si no viene el parámetro: ocho dígitos ya son una fecha.
-        assert!(fecha_de("20260915", &[], &Zonas::default()).unwrap().1);
+        assert!(instant_of("20260915", &[], &Zonas::default()).unwrap().1);
     }
 
     #[test]
     fn una_fecha_con_hora_no_es_de_dia_completo() {
-        let (momento, todo_el_dia) = fecha_de("20260915T140000Z", &[], &Zonas::default()).unwrap();
+        let (momento, todo_el_dia) =
+            instant_of("20260915T140000Z", &[], &Zonas::default()).unwrap();
         assert!(!todo_el_dia);
         assert_eq!(momento.to_rfc3339(), "2026-09-15T14:00:00+00:00");
     }
@@ -834,7 +1004,11 @@ mod tests {
     #[test]
     fn una_fecha_que_no_se_entiende_no_se_inventa() {
         for basura in ["", "mañana", "2026-09-15", "20261301", "20260915T99"] {
-            assert_eq!(fecha_de(basura, &[], &Zonas::default()), None, "{basura:?}");
+            assert_eq!(
+                instant_of(basura, &[], &Zonas::default()),
+                None,
+                "{basura:?}"
+            );
         }
     }
 
@@ -843,7 +1017,7 @@ mod tests {
     /// mostraba a las once de la mañana.
     #[test]
     fn una_fecha_con_tzid_no_es_utc() {
-        let (momento, todo_el_dia) = fecha_de(
+        let (momento, todo_el_dia) = instant_of(
             "20260915T140000",
             &["TZID=America/Argentina/Buenos_Aires".into()],
             &Zonas::default(),
@@ -857,7 +1031,7 @@ mod tests {
     /// nombre tiene barras o espacios.
     #[test]
     fn el_tzid_entre_comillas_se_resuelve_igual() {
-        let (momento, _) = fecha_de(
+        let (momento, _) = instant_of(
             "20260915T140000",
             &[r#"TZID="America/Argentina/Buenos Aires""#.into()],
             &Zonas::default(),
@@ -870,7 +1044,7 @@ mod tests {
     /// archivo mal escrito, no otra interpretación.
     #[test]
     fn la_z_manda_sobre_el_tzid() {
-        let (momento, _) = fecha_de(
+        let (momento, _) = instant_of(
             "20260915T140000Z",
             &["TZID=Europe/Madrid".into()],
             &Zonas::default(),
@@ -902,11 +1076,11 @@ mod tests {
             DTEND;TZID=Romance Standard Time:20260715T100000\r\n\
             END:VEVENT\r\nEND:VCALENDAR\r\n";
 
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
         // Julio es verano en Madrid: +2.
-        assert_eq!(eventos[0].inicio, "2026-07-15T07:00:00+00:00");
-        assert_eq!(eventos[0].fin, "2026-07-15T08:00:00+00:00");
+        assert_eq!(eventos[0].start, "2026-07-15T07:00:00+00:00");
+        assert_eq!(eventos[0].end, "2026-07-15T08:00:00+00:00");
     }
 
     /// Un `VTIMEZONE` con el ordinal del `BYDAY` en el extremo del tipo, tal
@@ -946,12 +1120,12 @@ mod tests {
             END:VEVENT\r\nEND:VCALENDAR\r\n";
 
         // Lo que no puede pasar es que esto entre en pánico.
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
         // La regla que no se entiende se descarta entera y la observancia cae
         // al respaldo de la estándar, que es lo que dice su `TZOFFSETTO`: +1.
-        assert_eq!(eventos[0].inicio, "2026-07-15T08:00:00+00:00");
-        assert_eq!(eventos[0].fin, "2026-07-15T09:00:00+00:00");
+        assert_eq!(eventos[0].start, "2026-07-15T08:00:00+00:00");
+        assert_eq!(eventos[0].end, "2026-07-15T09:00:00+00:00");
     }
 
     /// Un evento de día completo sigue sin tener zona, aunque el archivo defina
@@ -962,9 +1136,9 @@ mod tests {
             DTSTART;VALUE=DATE:20260915\r\nDTEND;VALUE=DATE:20260916\r\n\
             END:VEVENT\r\nEND:VCALENDAR\r\n";
 
-        let eventos = eventos_de(ical);
-        assert!(eventos[0].todo_el_dia);
-        assert_eq!(eventos[0].inicio, "2026-09-15T00:00:00+00:00");
+        let eventos = all_events(ical);
+        assert!(eventos[0].all_day);
+        assert_eq!(eventos[0].start, "2026-09-15T00:00:00+00:00");
     }
 
     const UN_EVENTO: &str = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r\n\
@@ -978,17 +1152,17 @@ mod tests {
         let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\n\
             DTSTART;TZID=Europe/Madrid:20260915T140000\r\n\
             DTEND;TZID=Europe/Madrid:20260915T150000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-        assert_eq!(eventos_de(ical)[0].zona, "Europe/Madrid");
+        assert_eq!(all_events(ical)[0].zone, "Europe/Madrid");
 
         // Entre comillas es el mismo nombre, no otro.
         let comillado = ical.replace("TZID=Europe/Madrid", "TZID=\"Europe/Madrid\"");
-        assert_eq!(eventos_de(&comillado)[0].zona, "Europe/Madrid");
+        assert_eq!(all_events(&comillado)[0].zone, "Europe/Madrid");
     }
 
     /// Una fecha en UTC ya es un instante: no hay ninguna zona que mostrar.
     #[test]
     fn un_evento_en_utc_no_lleva_zona() {
-        assert_eq!(eventos_de(UN_EVENTO)[0].zona, "");
+        assert_eq!(all_events(UN_EVENTO)[0].zone, "");
     }
 
     /// Y uno de día completo tampoco, aunque el archivo le ponga una: no tiene
@@ -998,17 +1172,17 @@ mod tests {
         let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\n\
             DTSTART;TZID=Europe/Madrid;VALUE=DATE:20260915\r\n\
             END:VEVENT\r\nEND:VCALENDAR\r\n";
-        assert_eq!(eventos_de(ical)[0].zona, "");
+        assert_eq!(all_events(ical)[0].zone, "");
     }
 
     #[test]
     fn se_lee_un_evento() {
-        let eventos = eventos_de(UN_EVENTO);
+        let eventos = all_events(UN_EVENTO);
         assert_eq!(eventos.len(), 1);
         assert_eq!(eventos[0].uid, "abc");
-        assert_eq!(eventos[0].titulo, "Reunión, con Ana");
-        assert!(!eventos[0].todo_el_dia);
-        assert!(!eventos[0].se_repite);
+        assert_eq!(eventos[0].title, "Reunión, con Ana");
+        assert!(!eventos[0].all_day);
+        assert!(!eventos[0].recurring);
     }
 
     /// Un calendario trae también tareas y notas. Mostrarlas como eventos
@@ -1021,7 +1195,7 @@ mod tests {
             BEGIN:VEVENT\r\nUID:e\r\nSUMMARY:Reunión\r\nDTSTART:20260915T140000Z\r\nEND:VEVENT\r\n\
             END:VCALENDAR\r\n";
 
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
         assert_eq!(eventos[0].uid, "e");
     }
@@ -1040,9 +1214,9 @@ mod tests {
             SUMMARY:Recordatorio\r\nDESCRIPTION:Falta un rato\r\nEND:VALARM\r\n\
             END:VEVENT\r\n";
 
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
-        assert_eq!(eventos[0].titulo, "Reunión con Ana");
+        assert_eq!(eventos[0].title, "Reunión con Ana");
     }
 
     /// Y un `DTSTART` de adentro tampoco corre el evento de día.
@@ -1056,11 +1230,11 @@ mod tests {
             RRULE:FREQ=DAILY\r\nEND:VALARM\r\n\
             END:VEVENT\r\n";
 
-        let evento = &eventos_de(ical)[0];
-        assert_eq!(evento.inicio, "2026-09-15T14:00:00+00:00");
+        let evento = &all_events(ical)[0];
+        assert_eq!(evento.start, "2026-09-15T14:00:00+00:00");
         // Y el `RRULE` del aviso tampoco lo marca como repetido: el que se
         // repite es el recordatorio, no la reunión.
-        assert!(!evento.se_repite);
+        assert!(!evento.recurring);
     }
 
     /// Sin comienzo no hay dónde ponerlo en el mes. El estándar lo exige, pero
@@ -1072,7 +1246,7 @@ mod tests {
             BEGIN:VEVENT\r\nUID:sano\r\nSUMMARY:Con fecha\r\nDTSTART:20260915T140000Z\r\nEND:VEVENT\r\n\
             END:VCALENDAR\r\n";
 
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
         assert_eq!(eventos[0].uid, "sano");
     }
@@ -1082,23 +1256,26 @@ mod tests {
     #[test]
     fn sin_fin_la_duracion_es_la_que_dice_el_estandar() {
         let de_dia = "BEGIN:VEVENT\r\nUID:d\r\nDTSTART;VALUE=DATE:20260915\r\nEND:VEVENT\r\n";
-        let evento = &eventos_de(de_dia)[0];
-        assert_eq!(evento.inicio, "2026-09-15T00:00:00+00:00");
-        assert_eq!(evento.fin, "2026-09-16T00:00:00+00:00");
+        let evento = &all_events(de_dia)[0];
+        assert_eq!(evento.start, "2026-09-15T00:00:00+00:00");
+        assert_eq!(evento.end, "2026-09-16T00:00:00+00:00");
 
         let con_hora = "BEGIN:VEVENT\r\nUID:h\r\nDTSTART:20260915T140000Z\r\nEND:VEVENT\r\n";
-        let evento = &eventos_de(con_hora)[0];
-        assert_eq!(evento.inicio, evento.fin);
+        let evento = &all_events(con_hora)[0];
+        assert_eq!(evento.start, evento.end);
     }
 
-    /// Un evento que se repite se marca, aunque todavía no se expandan las
-    /// repeticiones: la ventana puede decir que hay más, en vez de mostrar una
-    /// reunión semanal como si fuera única.
+    /// Un evento que se repite sale una vez por repetición, y cada una marcada:
+    /// antes salía una sola, el día que empezaba, y las otras nueve semanas
+    /// parecían libres.
     #[test]
-    fn un_evento_que_se_repite_queda_marcado() {
+    fn un_evento_que_se_repite_sale_en_cada_repeticion() {
         let ical = "BEGIN:VEVENT\r\nUID:r\r\nDTSTART:20260915T140000Z\r\n\
                     RRULE:FREQ=WEEKLY;COUNT=10\r\nEND:VEVENT\r\n";
-        assert!(eventos_de(ical)[0].se_repite);
+        let eventos = all_events(ical);
+        assert_eq!(eventos.len(), 10);
+        assert!(eventos.iter().all(|e| e.recurring && !e.shown_once));
+        assert_eq!(eventos[9].start, "2026-11-17T14:00:00+00:00");
     }
 
     /// Un evento sin título existe y ocupa lugar en el día de la persona igual,
@@ -1106,9 +1283,9 @@ mod tests {
     #[test]
     fn un_evento_sin_titulo_se_muestra_igual() {
         let ical = "BEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260915T140000Z\r\nEND:VEVENT\r\n";
-        let eventos = eventos_de(ical);
+        let eventos = all_events(ical);
         assert_eq!(eventos.len(), 1);
-        assert_eq!(eventos[0].titulo, "");
+        assert_eq!(eventos[0].title, "");
     }
 
     /// Basura no puede hacer caer la ventana: viene de un servidor y de eventos
@@ -1122,7 +1299,7 @@ mod tests {
             "END:VEVENT\r\n",
             ":::",
         ] {
-            assert!(eventos_de(basura).is_empty(), "{basura:?}");
+            assert!(all_events(basura).is_empty(), "{basura:?}");
         }
     }
 
@@ -1262,7 +1439,7 @@ mod tests {
         let momento = Utc.with_ymd_and_hms(2026, 9, 15, 14, 30, 0).unwrap();
         assert_eq!(momento_caldav(momento), "20260915T143000Z");
 
-        let consulta = consulta_de_eventos("20260901T000000Z", "20261001T000000Z");
+        let consulta = events_query("20260901T000000Z", "20261001T000000Z", false);
         assert!(
             consulta.contains(r#"start="20260901T000000Z""#),
             "{consulta}"
@@ -1271,5 +1448,159 @@ mod tests {
             roxmltree::Document::parse(&consulta).is_ok(),
             "no es XML válido"
         );
+    }
+
+    // ── Lo que devuelve un servidor de verdad con y sin `<c:expand>` ─────────
+    //
+    // Ver `tests/fixtures/caldav/README.md`: las de Radicale están grabadas de
+    // un servidor corriendo, la de Nextcloud armada siguiendo a SabreDAV.
+
+    const RADICALE_EXPAND: &str =
+        include_str!("../tests/fixtures/caldav/radicale-3.8.1-expand.xml");
+    const RADICALE_PLAIN: &str = include_str!("../tests/fixtures/caldav/radicale-3.8.1-plain.xml");
+    const NEXTCLOUD_EXPAND: &str = include_str!("../tests/fixtures/caldav/nextcloud-32-expand.xml");
+
+    fn october_window() -> Window {
+        Window {
+            start: Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
+            end: Utc.with_ymd_and_hms(2026, 11, 15, 0, 0, 0).unwrap(),
+        }
+    }
+
+    /// Lo que hace [`events`] con una respuesta, sin la red.
+    fn read_response(xml: &str) -> (ServerExpansion, Vec<(String, String, bool)>) {
+        let mut verdicts = Vec::new();
+        let mut events = Vec::new();
+        for block in ical_de_respuesta(xml).unwrap() {
+            let components = components_of(&block);
+            verdicts.push(server_expansion(&components));
+            events.extend(crate::recurrence::expand(components, &october_window()).events);
+        }
+        let verdict = if verdicts.contains(&ServerExpansion::Ignored) {
+            ServerExpansion::Ignored
+        } else if verdicts.contains(&ServerExpansion::Honored) {
+            ServerExpansion::Honored
+        } else {
+            ServerExpansion::NotNeeded
+        };
+        let mut seen: Vec<(String, String, bool)> = events
+            .into_iter()
+            .map(|e| (e.start, e.title, e.recurring))
+            .collect();
+        seen.sort();
+        (verdict, seen)
+    }
+
+    /// Lo que la persona tiene que ver del mes, venga como venga: la reunión
+    /// de los martes a las 10 de Madrid —a las 8 UTC antes del 25/10 y a las 9
+    /// después—, sin el 13 (quitado), con la del 20 movida al 21 y sin la del
+    /// 3/11 (cancelada); el cumpleaños del 15 y el dentista del 9.
+    fn expected() -> Vec<(String, String, bool)> {
+        let mut v: Vec<(String, String, bool)> = [
+            ("2026-10-06T08:00:00+00:00", "Reunión de equipo", true),
+            ("2026-10-09T14:00:00+00:00", "Dentista", false),
+            ("2026-10-15T00:00:00+00:00", "Cumpleaños de Ana", true),
+            (
+                "2026-10-21T10:00:00+00:00",
+                "Reunión de equipo (movida)",
+                true,
+            ),
+            ("2026-10-27T09:00:00+00:00", "Reunión de equipo", true),
+            ("2026-11-10T09:00:00+00:00", "Reunión de equipo", true),
+        ]
+        .into_iter()
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c))
+        .collect();
+        v.sort();
+        v
+    }
+
+    /// Radicale 3.8.1 respeta el `expand`: ninguna regla en la respuesta, y
+    /// la cancelada viene igual, con su `STATUS:CANCELLED` —y no se muestra—.
+    #[test]
+    fn radicale_expande_y_se_le_cree() {
+        assert!(RADICALE_EXPAND.contains("STATUS:CANCELLED"));
+        let (verdict, seen) = read_response(RADICALE_EXPAND);
+        assert_eq!(verdict, ServerExpansion::Honored);
+        assert_eq!(seen, expected());
+    }
+
+    /// Sin `expand` —o con un servidor que lo ignora, que contesta lo
+    /// mismo—, las series vienen con su `RRULE` y se expanden acá, con el
+    /// **mismo** resultado que dio el servidor.
+    #[test]
+    fn un_servidor_que_no_expande_se_detecta_y_se_expande_aca() {
+        assert!(RADICALE_PLAIN.contains("RRULE:FREQ=WEEKLY"));
+        let (verdict, seen) = read_response(RADICALE_PLAIN);
+        assert_eq!(verdict, ServerExpansion::Ignored);
+        assert_eq!(seen, expected());
+    }
+
+    /// Nextcloud (SabreDAV) expande con los finales de línea como `&#13;` y
+    /// el `RECURRENCE-ID` de día completo como fecha.
+    #[test]
+    fn nextcloud_expande_y_se_le_cree() {
+        let (verdict, seen) = read_response(NEXTCLOUD_EXPAND);
+        assert_eq!(verdict, ServerExpansion::Honored);
+        let without_dentist: Vec<_> = expected()
+            .into_iter()
+            .filter(|(_, title, _)| title != "Dentista")
+            .collect();
+        assert_eq!(seen, without_dentist);
+    }
+
+    #[test]
+    fn sin_nada_que_se_repita_no_se_sabe() {
+        assert_eq!(
+            server_expansion(&components_of(UN_EVENTO)),
+            ServerExpansion::NotNeeded
+        );
+    }
+
+    /// La consulta con `expand` es exactamente la que se le mandó a Radicale
+    /// para grabar la respuesta: si cambia, la grabación deja de probar lo
+    /// que se manda.
+    #[test]
+    fn la_consulta_con_expand_es_la_que_se_grabo() {
+        let recorded = include_str!("../tests/fixtures/caldav/expand-query.xml");
+        let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(
+            normalize(&events_query("20261001T000000Z", "20261115T000000Z", true)),
+            normalize(recorded)
+        );
+        assert!(!events_query("a", "b", false).contains("expand"));
+    }
+
+    /// Un rechazo que puede ser por el `expand` se reintenta sin él; uno de
+    /// credencial no, que pedir otra vez no lo arregla.
+    #[test]
+    fn solo_se_reintenta_sin_expand_lo_que_puede_ser_por_expand() {
+        for status in [400, 403, 415, 422, 501] {
+            assert!(retry_without_expand(status), "{status}");
+        }
+        for status in [200, 207, 301, 401, 404, 500, 503] {
+            assert!(!retry_without_expand(status), "{status}");
+        }
+    }
+
+    /// Las fechas sueltas tienen tope aunque antes haya un `EXDATE` roto: la
+    /// lista no crece sin límite, y el primer motivo es el que queda.
+    #[test]
+    fn las_fechas_sueltas_tienen_tope_aunque_haya_un_error_antes() {
+        let mut ical = String::from(
+            "BEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260105T100000Z\r\nRRULE:FREQ=DAILY\r\nEXDATE:ayer\r\n",
+        );
+        for day in 0..(MAX_DATES_PER_COMPONENT + 10) {
+            ical.push_str(&format!(
+                "EXDATE:2027{:02}{:02}T100000Z\r\n",
+                day % 12 + 1,
+                day % 28 + 1
+            ));
+        }
+        ical.push_str("END:VEVENT\r\n");
+        let component = &components_of(&ical)[0];
+        assert!(component.exdates.len() <= MAX_DATES_PER_COMPONENT);
+        assert_eq!(component.unreadable.len(), 1);
+        assert!(component.unreadable[0].contains("ayer"));
     }
 }

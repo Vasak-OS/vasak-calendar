@@ -2,13 +2,13 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { computed } from 'vue';
 import { claveSegunCantidad, interpolar } from '@/tools/interpolar';
-import type { Dia, Evento } from '@/tools/mes';
+import type { CalendarEvent, Dia } from '@/tools/mes';
 
 const props = defineProps<{
 	dias: Dia[];
 	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
 	zona: string;
-	eventosDe: (clave: string) => Evento[];
+	eventsOf: (clave: string) => CalendarEvent[];
 }>();
 
 const { t, locale } = useI18n();
@@ -69,24 +69,24 @@ const semanas = computed(() => {
 	return filas;
 });
 
-function visiblesDe(dia: Dia): Evento[] {
-	return props.eventosDe(dia.clave).slice(0, VISIBLES);
+function visibleOf(dia: Dia): CalendarEvent[] {
+	return props.eventsOf(dia.clave).slice(0, VISIBLES);
 }
 
 function sobrantesDe(dia: Dia): number {
-	return Math.max(0, props.eventosDe(dia.clave).length - VISIBLES);
+	return Math.max(0, props.eventsOf(dia.clave).length - VISIBLES);
 }
 
-function tituloDe(evento: Evento): string {
-	return evento.titulo.trim() || t('calendario.sinTitulo');
+function titleOf(event: CalendarEvent): string {
+	return event.title.trim() || t('calendario.sinTitulo');
 }
 
 /** La hora de un evento, o «todo el día» si no tiene. */
-function horaDe(evento: Evento): string {
-	if (evento.todo_el_dia) {
+function timeOf(event: CalendarEvent): string {
+	if (event.all_day) {
 		return t('calendario.todoElDia');
 	}
-	return formatoDeHora.value.format(new Date(evento.inicio));
+	return formatoDeHora.value.format(new Date(event.start));
 }
 
 /**
@@ -95,9 +95,9 @@ function horaDe(evento: Evento): string {
  * La hora y el título juntos: el color dice de qué calendario es, y un color no
  * se lee.
  */
-function descripcionDe(evento: Evento): string {
-	const base = interpolar(t('calendario.eventosDelDia'), horaDe(evento), tituloDe(evento));
-	const otra = zonaAjenaDe(evento);
+function descriptionOf(event: CalendarEvent): string {
+	const base = interpolar(t('calendario.eventosDelDia'), timeOf(event), titleOf(event));
+	const otra = foreignZoneOf(event);
 	return otra ? `${base} — ${interpolar(t('calendario.escritoEn'), otra)}` : base;
 }
 
@@ -110,8 +110,18 @@ function descripcionDe(evento: Evento): string {
  * está escrito es la diferencia entre que eso se entienda y que parezca un error
  * del calendario.
  */
-function zonaAjenaDe(evento: Evento): string {
-	return evento.zona && evento.zona !== props.zona ? evento.zona : '';
+function foreignZoneOf(event: CalendarEvent): string {
+	return event.zone && event.zone !== props.zona ? event.zone : '';
+}
+
+/**
+ * Lo que dice la marca de repetición: «se repite», o, si la serie no se pudo
+ * expandir, además que se muestra sólo el día que empieza.
+ */
+function recurrenceNoteOf(event: CalendarEvent): string {
+	return event.shown_once
+		? `${t('calendario.recurring')} — ${t('calendario.shownOnce')}`
+		: t('calendario.recurring');
 }
 
 function resumenSobrantes(cantidad: number): string {
@@ -193,36 +203,37 @@ function resumenSobrantes(cantidad: number): string {
 
           <ul class="flex min-h-0 flex-col gap-0.5 overflow-hidden">
             <li
-              v-for="evento in visiblesDe(dia)"
-              :key="`${evento.uid}-${evento.inicio}`"
+              v-for="event in visibleOf(dia)"
+              :key="`${event.uid}-${event.start}`"
               class="flex items-center gap-1 truncate rounded-corner-sm bg-ui-surface/60 px-1 py-0.5 text-xs"
-              :title="descripcionDe(evento)">
+              :title="descriptionOf(event)">
               <!-- El color del calendario, como una marca al costado y no como
                    fondo del evento: de fondo, un color cualquiera del servidor
                    puede dejar el texto ilegible, y no hay forma de saber de
                    antemano si es claro u oscuro. -->
               <span
                 class="h-3 w-1 shrink-0 rounded-full"
-                :style="{ backgroundColor: evento.color ?? 'var(--color-primary)' }"
+                :style="{ backgroundColor: event.color ?? 'var(--color-primary)' }"
                 aria-hidden="true"></span>
-              <span class="sr-only">{{ descripcionDe(evento) }}</span>
+              <span class="sr-only">{{ descriptionOf(event) }}</span>
               <span class="shrink-0 text-tx-muted tabular-nums" aria-hidden="true">
-                {{ evento.todo_el_dia ? '' : horaDe(evento) }}
+                {{ event.all_day ? '' : timeOf(event) }}
               </span>
-              <span class="truncate" aria-hidden="true">{{ tituloDe(evento) }}</span>
-              <!-- Que se repite se dice, porque esta versión lo muestra una sola
-                   vez: sin la marca, una reunión semanal parece única y las
-                   demás semanas parecen libres. -->
+              <span class="truncate" aria-hidden="true">{{ titleOf(event) }}</span>
               <span
-                v-if="zonaAjenaDe(evento)"
+                v-if="foreignZoneOf(event)"
                 class="shrink-0 text-tx-muted"
-                :title="interpolar(t('calendario.escritoEn'), zonaAjenaDe(evento))"
+                :title="interpolar(t('calendario.escritoEn'), foreignZoneOf(event))"
                 aria-hidden="true">🌐</span>
+              <!-- Una serie que no se pudo expandir se muestra sólo el día que
+                   empieza, y eso se dice: sin la marca, una reunión semanal
+                   parece única y las demás semanas parecen libres. Las que sí
+                   se expandieron llevan la marca común de «se repite». -->
               <span
-                v-if="evento.se_repite"
+                v-if="event.recurring"
                 class="shrink-0 text-tx-muted"
-                :title="`${t('calendario.seRepite')} — ${t('calendario.seRepiteDetalle')}`"
-                :aria-label="t('calendario.seRepite')">↻</span>
+                :title="recurrenceNoteOf(event)"
+                :aria-label="recurrenceNoteOf(event)">↻</span>
             </li>
             <li v-if="sobrantesDe(dia) > 0" class="px-1 text-tx-muted text-xs">
               {{ resumenSobrantes(sobrantesDe(dia)) }}

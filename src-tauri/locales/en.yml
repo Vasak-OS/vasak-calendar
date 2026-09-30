@@ -14,8 +14,8 @@ calendario:
   eventosDelDia: "{0}: {1}"
   todoElDia: All day
   sinTitulo: (untitled)
-  seRepite: Repeats
-  seRepiteDetalle: For now it only shows on the day it starts.
+  recurring: Repeats
+  shownOnce: "The repeat rule couldn't be read: it only shows on the day it starts."
   escritoEn: "Written in {0} time"
   zonaEtiqueta: "Calendar time zone"
   zonaAyuda: "Which clock the events are shown in"
