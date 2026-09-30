@@ -1,7 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { computed, onScopeDispose, ref, watch } from 'vue';
-import { cuadricula, type Evento, porDia, primeroDelMes, rangoDe, sumarMeses } from '@/tools/mes';
+import {
+	type CalendarEvent,
+	cuadricula,
+	eventsByDay,
+	primeroDelMes,
+	rangoDe,
+	sumarMeses,
+} from '@/tools/mes';
 import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
 
 /** Dónde se recuerda en qué zona se quiere ver la agenda. */
@@ -44,7 +51,7 @@ export interface Calendario {
 
 interface LecturaDeCuenta {
 	calendarios: Calendario[];
-	eventos: Evento[];
+	eventos: CalendarEvent[];
 	fallos: string[];
 }
 
@@ -111,7 +118,7 @@ export function useCalendario() {
 	const mes = ref(primeroDelMes(new Date(), zona.value));
 	const cuentas = ref<Cuenta[]>([]);
 	const calendarios = ref<Calendario[]>([]);
-	const eventos = ref<Evento[]>([]);
+	const eventos = ref<CalendarEvent[]>([]);
 	const cargando = ref(false);
 	/** Lo que impidió leer algo, en el idioma de lo que la persona puede hacer. */
 	const avisos = ref<string[]>([]);
@@ -127,10 +134,10 @@ export function useCalendario() {
 	let vigente = 0;
 
 	const dias = computed(() => cuadricula(mes.value, zona.value, hoy.value));
-	const eventosPorDia = computed(() => porDia(eventos.value, dias.value, zona.value));
+	const eventosPorDia = computed(() => eventsByDay(eventos.value, dias.value, zona.value));
 
 	/** Los eventos de un día de la cuadrícula. */
-	function eventosDe(clave: string): Evento[] {
+	function eventsOf(clave: string): CalendarEvent[] {
 		return eventosPorDia.value.get(clave) ?? [];
 	}
 
@@ -150,7 +157,7 @@ export function useCalendario() {
 			cuentas.value = conectadas;
 
 			const { desde, hasta } = rangoDe(dias.value, zona.value);
-			const nuevosEventos: Evento[] = [];
+			const nuevosEventos: CalendarEvent[] = [];
 			const nuevosCalendarios: Calendario[] = [];
 
 			for (const cuenta of conectadas) {
@@ -161,10 +168,10 @@ export function useCalendario() {
 					continue;
 				}
 				try {
-					const lectura = await invoke<LecturaDeCuenta>('eventos_de_la_cuenta', {
+					const lectura = await invoke<LecturaDeCuenta>('account_events', {
 						accountId: cuenta.id,
-						desde,
-						hasta,
+						from: desde,
+						to: hasta,
 					});
 					nuevosCalendarios.push(...lectura.calendarios);
 					nuevosEventos.push(...lectura.eventos);
@@ -294,7 +301,7 @@ export function useCalendario() {
 		eventos,
 		cargando,
 		avisos,
-		eventosDe,
+		eventsOf,
 		cargar,
 		mesAnterior,
 		mesSiguiente,

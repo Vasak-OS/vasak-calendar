@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	type CalendarEvent,
 	cuadricula,
-	type Evento,
-	porDia,
+	eventsByDay,
 	primeroDelMes,
 	rangoDe,
 	sumarMeses,
@@ -22,16 +22,17 @@ const TOKIO = 'Asia/Tokyo';
 const ZONA = 'UTC';
 
 /** Un evento con lo mínimo, para no repetir el resto en cada caso. */
-function evento(inicio: string, fin: string, extra: Partial<Evento> = {}): Evento {
+function event(start: string, end: string, extra: Partial<CalendarEvent> = {}): CalendarEvent {
 	return {
-		uid: inicio,
-		titulo: 'Algo',
-		inicio,
-		fin,
-		todo_el_dia: false,
-		se_repite: false,
-		zona: '',
-		calendario: 'https://nube.ejemplo.com/dav/calendars/ana/personal/',
+		uid: start,
+		title: 'Algo',
+		start,
+		end,
+		all_day: false,
+		recurring: false,
+		shown_once: false,
+		zone: '',
+		calendar: 'https://nube.ejemplo.com/dav/calendars/ana/personal/',
 		color: null,
 		...extra,
 	};
@@ -183,13 +184,13 @@ describe('rangoDe', () => {
 	});
 });
 
-describe('porDia', () => {
+describe('eventsByDay', () => {
 	/** Septiembre de 2026, que es la cuadrícula de casi todos los casos de acá. */
 	const MES = cuadricula(mediodia('2026-09-01'), ZONA);
 
 	test('un evento de un día cae en su día', () => {
-		const mapa = porDia(
-			[evento('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -199,8 +200,8 @@ describe('porDia', () => {
 	test('un evento de varios días aparece en todos', () => {
 		// Una conferencia de martes a jueves que sólo se viera el martes haría
 		// creer que el miércoles está libre.
-		const mapa = porDia(
-			[evento('2026-09-15T09:00:00+00:00', '2026-09-17T18:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2026-09-15T09:00:00+00:00', '2026-09-17T18:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -213,8 +214,8 @@ describe('porDia', () => {
 	test('uno de día completo no se derrama al día siguiente', () => {
 		// El formato hace terminar un día completo en la medianoche del día
 		// **siguiente**. Contarla como un día más lo pintaría un día de sobra.
-		const mapa = porDia(
-			[evento('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', { todo_el_dia: true })],
+		const mapa = eventsByDay(
+			[event('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', { all_day: true })],
 			MES,
 			ZONA
 		);
@@ -227,12 +228,12 @@ describe('porDia', () => {
 		// ese día, que es la forma de decir «el 15» sin decir a qué hora. Leída en
 		// la zona de la agenda, en Buenos Aires son las nueve de la noche del 14:
 		// el feriado del 15 se dibujaba el 14, en silencio.
-		const completo = evento('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', {
-			todo_el_dia: true,
+		const completo = event('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', {
+			all_day: true,
 		});
 
 		for (const zona of [ZONA, BUENOS_AIRES, TOKIO]) {
-			const mapa = porDia([completo], cuadricula(mediodia('2026-09-01'), zona), zona);
+			const mapa = eventsByDay([completo], cuadricula(mediodia('2026-09-01'), zona), zona);
 			expect(mapa.get('2026-09-15'), zona).toHaveLength(1);
 			expect(mapa.has('2026-09-14'), zona).toBe(false);
 			expect(mapa.has('2026-09-16'), zona).toBe(false);
@@ -243,23 +244,23 @@ describe('porDia', () => {
 		// Lo contrario del caso anterior, y es lo correcto: una reunión de las 23
 		// UTC del 15 es del 16 en Tokio, y quien mire la agenda en Tokio la tiene
 		// el 16.
-		const nocturno = evento('2026-09-15T23:00:00+00:00', '2026-09-16T00:00:00+00:00');
+		const nocturno = event('2026-09-15T23:00:00+00:00', '2026-09-16T00:00:00+00:00');
 
-		expect(porDia([nocturno], MES, ZONA).has('2026-09-15')).toBe(true);
+		expect(eventsByDay([nocturno], MES, ZONA).has('2026-09-15')).toBe(true);
 		const enTokio = cuadricula(mediodia('2026-09-01'), TOKIO);
-		expect(porDia([nocturno], enTokio, TOKIO).has('2026-09-16')).toBe(true);
+		expect(eventsByDay([nocturno], enTokio, TOKIO).has('2026-09-16')).toBe(true);
 	});
 
 	test('primero los de día completo y después por hora', () => {
 		// Sin ordenar salen como los mandó el servidor, que no sigue ningún
 		// criterio útil.
-		const mapa = porDia(
+		const mapa = eventsByDay(
 			[
-				evento('2026-09-15T18:00:00+00:00', '2026-09-15T19:00:00+00:00', { uid: 'tarde' }),
-				evento('2026-09-15T09:00:00+00:00', '2026-09-15T10:00:00+00:00', { uid: 'mañana' }),
-				evento('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', {
+				event('2026-09-15T18:00:00+00:00', '2026-09-15T19:00:00+00:00', { uid: 'tarde' }),
+				event('2026-09-15T09:00:00+00:00', '2026-09-15T10:00:00+00:00', { uid: 'mañana' }),
+				event('2026-09-15T00:00:00+00:00', '2026-09-16T00:00:00+00:00', {
 					uid: 'completo',
-					todo_el_dia: true,
+					all_day: true,
 				}),
 			],
 			MES,
@@ -272,8 +273,8 @@ describe('porDia', () => {
 	test('un evento sin fin usable ocupa sólo su día', () => {
 		// El programa manda `fin` igual a `inicio` cuando el evento no traía
 		// `DTEND`. No puede terminar dando un bucle ni cero días.
-		const mapa = porDia(
-			[evento('2026-09-15T14:00:00+00:00', '2026-09-15T14:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2026-09-15T14:00:00+00:00', '2026-09-15T14:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -283,8 +284,8 @@ describe('porDia', () => {
 	test('un fin anterior al inicio no da un bucle infinito', () => {
 		// Un servidor puede mandar cualquier cosa, y un recorrido que avanza hacia
 		// un tope que quedó atrás no termina nunca: la ventana se congela.
-		const mapa = porDia(
-			[evento('2026-09-15T14:00:00+00:00', '2026-09-01T00:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2026-09-15T14:00:00+00:00', '2026-09-01T00:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -296,8 +297,8 @@ describe('porDia', () => {
 		// congela varios segundos y nada explica por qué. Recortado a la
 		// cuadrícula, no puede dar más de 42.
 		const empezo = Date.now();
-		const mapa = porDia(
-			[evento('2026-09-15T00:00:00+00:00', '9999-12-31T00:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2026-09-15T00:00:00+00:00', '9999-12-31T00:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -312,8 +313,8 @@ describe('porDia', () => {
 	test('un evento que empieza antes de la cuadrícula se ve desde el borde', () => {
 		// Una conferencia de agosto que sigue en septiembre ocupa los primeros
 		// días del mes que se está mirando, y ésos hay que pintarlos.
-		const mapa = porDia(
-			[evento('2020-01-01T00:00:00+00:00', '2026-09-03T00:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2020-01-01T00:00:00+00:00', '2026-09-03T00:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -323,8 +324,8 @@ describe('porDia', () => {
 	});
 
 	test('un evento que cae fuera de la cuadrícula no aparece', () => {
-		const mapa = porDia(
-			[evento('2027-05-01T00:00:00+00:00', '2027-05-02T00:00:00+00:00')],
+		const mapa = eventsByDay(
+			[event('2027-05-01T00:00:00+00:00', '2027-05-02T00:00:00+00:00')],
 			MES,
 			ZONA
 		);
@@ -332,15 +333,15 @@ describe('porDia', () => {
 	});
 
 	test('sin cuadrícula no hay dónde poner nada', () => {
-		const mapa = porDia([evento('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00')], [], ZONA);
+		const mapa = eventsByDay([event('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00')], [], ZONA);
 		expect(mapa.size).toBe(0);
 	});
 
 	test('una fecha que no se entiende se saltea sin perder las demás', () => {
-		const mapa = porDia(
+		const mapa = eventsByDay(
 			[
-				evento('no es una fecha', 'tampoco'),
-				evento('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00', { uid: 'sano' }),
+				event('no es una fecha', 'tampoco'),
+				event('2026-09-15T14:00:00+00:00', '2026-09-15T15:00:00+00:00', { uid: 'sano' }),
 			],
 			MES,
 			ZONA

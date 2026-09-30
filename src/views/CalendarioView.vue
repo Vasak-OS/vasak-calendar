@@ -20,7 +20,7 @@ const {
 	calendarios,
 	cargando,
 	avisos,
-	eventosDe,
+	eventsOf,
 	cargar,
 	mesAnterior,
 	mesSiguiente,
@@ -146,6 +146,6 @@ onMounted(cargar);
       :zona-del-sistema="zonaDelSistema"
       :zona-ajena="zonaAjena"
       @elegir-zona="elegirZona" />
-    <MesComponent :dias="dias" :zona="zona" :eventos-de="eventosDe" />
+    <MesComponent :dias="dias" :zona="zona" :events-of="eventsOf" />
   </WindowAppLayout>
 </template>
