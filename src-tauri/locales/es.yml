@@ -44,3 +44,7 @@ cuentas:
   sinCuentasDescripcion: Conectá una cuenta desde Configuración y sus calendarios aparecen acá.
   necesitaReconectarse: Hay que volver a conectarla desde Configuración
   noSePudoLeerTodo: No se pudo leer todo
+# Los botones de ir y volver entre columnas, con la ventana angosta.
+nav:
+  accounts: Cuentas
+  month: Mes
