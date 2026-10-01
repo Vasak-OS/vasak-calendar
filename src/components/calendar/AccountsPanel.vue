@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
+	ActionButton,
 	AlertMessage,
 	EmptyState,
 	Panel,
@@ -9,6 +10,7 @@ import {
 } from '@vasakgroup/vue-libvasak';
 import TimeZonePicker from '@/components/calendar/TimeZonePicker.vue';
 import type { Calendario, Cuenta } from '@/composables/use-calendario';
+import { NARROW_ONLY } from '@/tools/narrow-layout';
 
 defineProps<{
 	accounts: Cuenta[];
@@ -20,7 +22,11 @@ defineProps<{
 	foreignZone: boolean;
 }>();
 
-const emit = defineEmits<(e: 'chooseZone', zone: string) => void>();
+const emit = defineEmits<{
+	chooseZone: [zone: string];
+	/** Volver al mes, con la ventana angosta. */
+	forward: [];
+}>();
 
 const { t } = useI18n();
 </script>
@@ -37,7 +43,22 @@ const { t } = useI18n();
          del 40 % de la fila: con el ancho fijo solo, el panel se quedaba con sus
          224 px y la cuadrícula del mes desaparecía entera por debajo de los
          450 px de ventana. Desde unos 560 px de fila, el panel mide lo mismo que
-         antes. -->
+         antes.
+
+         Por debajo de 36 rem de fila el panel deja de ir al costado: pasa a
+         ser una vista propia que ocupa toda la fila, y este botón lleva de
+         vuelta al mes (ver `tools/narrow-layout.ts`). Con la ventana ancha no
+         existe. -->
+    <div class="flex shrink-0 justify-end" :class="NARROW_ONLY" data-nav="accounts">
+      <ActionButton
+        variant="ghost"
+        size="sm"
+        icon="go-next"
+        icon-type="symbol"
+        icon-right
+        :label="t('nav.month')"
+        @click="emit('forward')" />
+    </div>
     <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
       <!-- Sin ninguna cuenta, lo que hace falta es decir **qué hacer**. Una lista
            vacía sin explicación se lee como una aplicación rota. -->

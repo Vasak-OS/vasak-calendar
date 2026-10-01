@@ -1,11 +1,12 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
-import { computed, onMounted } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
+import { NARROW_ONLY, type Pane, paneClass } from '@/tools/narrow-layout';
 
 const { t, locale } = useI18n();
 const {
@@ -41,6 +42,27 @@ const title = computed(() =>
 		timeZone: zona.value,
 	}).format(mes.value)
 );
+
+/**
+ * La columna que se mira con la ventana angosta (`tools/narrow-layout.ts`).
+ * Se arranca por el mes, que es lo que se viene a ver; las cuentas quedan un
+ * paso atrás.
+ */
+const pane = ref<Pane>('month');
+
+/**
+ * Pasa a otra columna y le lleva el foco a su botón de ir o volver: la que se
+ * deja se oculta, y un foco en algo oculto se pierde. Con la ventana ancha ese
+ * botón no se muestra y el foco se queda donde estaba.
+ */
+async function go(next: Pane) {
+	pane.value = next;
+	await nextTick();
+	// El marcador va en el envoltorio del botón y no en el botón: con las
+	// plantillas estrictas, un atributo que el componente no declara no compila.
+	const target = document.querySelector<HTMLElement>(`[data-nav="${next}"] button`);
+	target?.focus();
+}
 
 onMounted(cargar);
 </script>
@@ -142,6 +164,7 @@ onMounted(cargar);
     <!-- Las secciones separadas por aire y no por líneas: cada una es una
          superficie redondeada, como los paneles del escritorio. -->
     <AccountsPanel
+      :class="paneClass('accounts', pane)"
       :accounts="cuentas"
       :calendars="calendarios"
       :notices="avisos"
@@ -149,7 +172,26 @@ onMounted(cargar);
       :chosen-zone="zonaElegida"
       :system-zone="zonaDelSistema"
       :foreign-zone="zonaAjena"
-      @choose-zone="elegirZona" />
-    <MonthGrid :days="dias" :zone="zona" :events-of="eventsOf" />
+      @choose-zone="elegirZona"
+      @forward="go('month')" />
+
+    <!-- El mes con su botón para ir a las cuentas, que sólo existe con la
+         ventana angosta. Con la ventana ancha el envoltorio no se nota: la
+         cuadrícula lo llena entero, como antes. -->
+    <div
+      data-pane="month"
+      class="flex min-h-0 min-w-0 flex-1 flex-col gap-1"
+      :class="paneClass('month', pane)">
+      <div class="flex shrink-0" :class="NARROW_ONLY" data-nav="month">
+        <ActionButton
+          variant="ghost"
+          size="sm"
+          icon="go-previous"
+          icon-type="symbol"
+          :label="t('nav.accounts')"
+          @click="go('accounts')" />
+      </div>
+      <MonthGrid :days="dias" :zone="zona" :events-of="eventsOf" />
+    </div>
   </WindowAppLayout>
 </template>

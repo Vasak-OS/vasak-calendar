@@ -32,3 +32,7 @@ cuentas:
   sinCuentasDescripcion: Connect an account from Settings and its calendars will show up here.
   necesitaReconectarse: It needs to be connected again from Settings
   noSePudoLeerTodo: Some things could not be read
+# The buttons that move between columns when the window is narrow.
+nav:
+  accounts: Accounts
+  month: Month

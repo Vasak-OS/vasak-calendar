@@ -31,7 +31,10 @@ import { WindowFrame } from '@vasakgroup/vue-libvasak';
     <template v-if="$slots.barraCentro" #centro><slot name="barraCentro" /></template>
     <template v-if="$slots.acciones" #acciones><slot name="acciones" /></template>
 
-    <div class="flex min-h-0 min-w-0 flex-1 gap-1 p-1">
+    <!-- La fila es un contenedor con nombre (`row`): con la ventana angosta
+         va una columna por vez, y eso lo decide el ancho de la fila, no el de
+         la pantalla (ver `tools/narrow-layout.ts`). -->
+    <div class="@container/row flex min-h-0 min-w-0 flex-1 gap-1 p-1">
       <slot />
     </div>
   </WindowFrame>
