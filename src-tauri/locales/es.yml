@@ -48,3 +48,12 @@ cuentas:
 nav:
   accounts: Cuentas
   month: Mes
+# El mes como lista, con la ventana angosta.
+agenda:
+  today: "Hoy · {0}"
+  range: "{0} – {1}"
+  from: "Desde las {0}"
+  until: "Hasta las {0}"
+  nothing: Nada para hoy
+  empty: No hay eventos este mes
+  emptyNote: Con las flechas de arriba se pasa a otro mes.

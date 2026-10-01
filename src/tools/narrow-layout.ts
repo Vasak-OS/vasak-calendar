@@ -39,8 +39,19 @@ export const PANE_SHOWN =
 /** Con la ventana angosta, la otra no se ve. */
 export const PANE_HIDDEN = '@max-[36rem]/row:hidden';
 
-/** Lo que sólo existe con la ventana angosta: los botones de ir y volver. */
+/**
+ * Lo que sólo existe con la ventana angosta: los botones de ir y volver, y el
+ * mes como agenda (`components/calendar/MonthAgenda.vue`).
+ */
 export const NARROW_ONLY = '@min-[36rem]/row:hidden';
+
+/**
+ * Lo que sólo existe con la ventana ancha: la cuadrícula del mes. Por debajo
+ * de 36 rem sus siete columnas miden unos 30 px, y ahí el mes se ve como
+ * agenda. Es el complemento exacto de `NARROW_ONLY`: a ningún ancho se ven
+ * las dos vistas, ni ninguna.
+ */
+export const WIDE_ONLY = '@max-[36rem]/row:hidden';
 
 /** Las clases de una columna según cuál se está mirando. */
 export function paneClass(pane: Pane, current: Pane): string {
