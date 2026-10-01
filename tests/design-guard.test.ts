@@ -61,7 +61,11 @@ const LIBRARY_TOKENS = `${ROOT}node_modules/@vasakgroup/vue-libvasak/dist/tokens
  * cuando el servidor no manda ninguno. Éstos son los únicos archivos donde
  * pasa; la regla está abajo, en «un color que es dato…».
  */
-const DATA_COLOR = ['components/calendar/AccountsPanel.vue', 'components/calendar/MonthGrid.vue'];
+const DATA_COLOR = [
+	'components/calendar/AccountsPanel.vue',
+	'components/calendar/MonthGrid.vue',
+	'components/calendar/MonthAgenda.vue',
+];
 
 /** Un color puesto por `style` en una plantilla, o la propiedad `color` de un componente. */
 const STYLE_COLOR = /:style="[^"]*(?:color|background)[^"]*"|(?<![\w-]):color="[^"]*"/gi;

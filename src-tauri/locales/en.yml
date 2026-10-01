@@ -36,3 +36,12 @@ cuentas:
 nav:
   accounts: Accounts
   month: Month
+# The month as a list, with a narrow window.
+agenda:
+  today: "Today · {0}"
+  range: "{0} – {1}"
+  from: "From {0}"
+  until: "Until {0}"
+  nothing: Nothing today
+  empty: No events this month
+  emptyNote: Use the arrows above to go to another month.

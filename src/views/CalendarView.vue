@@ -3,11 +3,12 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
+import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
-import { NARROW_ONLY, type Pane, paneClass } from '@/tools/narrow-layout';
+import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
 
 const { t, locale } = useI18n();
 const {
@@ -65,7 +66,30 @@ async function go(next: Pane) {
 	target?.focus();
 }
 
-onMounted(cargar);
+/** La agenda, para llevarla al día de hoy. Sólo se ve con la ventana angosta. */
+const agenda = ref<InstanceType<typeof MonthAgenda> | null>(null);
+
+/**
+ * «Hoy»: el mes de hoy y, en la agenda, la lista en el día de hoy.
+ *
+ * Después de cargar y de que se dibuje: el día de hoy no está en la lista
+ * hasta que el mes cambió, y sus eventos llegan con la carga. Con la ventana
+ * ancha la agenda está oculta y moverla no hace nada que se vea, así que no
+ * hace falta preguntar cuál de las dos se está mirando.
+ */
+async function goToToday() {
+	await irAHoy();
+	await nextTick();
+	agenda.value?.showToday();
+}
+
+onMounted(async () => {
+	await cargar();
+	// Se abre en el mes de hoy: con la ventana angosta, la agenda arranca en
+	// el día de hoy y no en el primero del mes, como en un teléfono.
+	await nextTick();
+	agenda.value?.showToday();
+});
 </script>
 
 <template>
@@ -132,7 +156,7 @@ onMounted(cargar);
           size="sm"
           class="shrink-0"
           :label="t('calendario.hoy')"
-          @click="irAHoy()" />
+          @click="goToToday()" />
       </div>
     </template>
 
@@ -178,7 +202,7 @@ onMounted(cargar);
             size="sm"
             class="col-start-3 row-start-1"
             :label="t('calendario.hoy')"
-            @click="irAHoy()" />
+            @click="goToToday()" />
           <MonthNavigation
             fluid
             class="col-span-3 row-start-2 @min-[22rem]/strip:col-span-1 @min-[22rem]/strip:col-start-2 @min-[22rem]/strip:row-start-1"
@@ -187,7 +211,18 @@ onMounted(cargar);
             @next="mesSiguiente()" />
         </div>
       </div>
-      <MonthGrid :days="dias" :zone="zona" :events-of="eventsOf" />
+      <!-- Las dos vistas del mismo mes, montadas siempre y una sola visible
+           según el ancho de la fila: la cuadrícula con la ventana ancha, la
+           agenda con la angosta, donde siete columnas de 30 px cortaban los
+           eventos a una hora sin título. Al cambiar el ancho se ve el mismo
+           mes, porque las dos leen de lo mismo. -->
+      <MonthGrid :class="WIDE_ONLY" :days="dias" :zone="zona" :events-of="eventsOf" />
+      <MonthAgenda
+        ref="agenda"
+        :class="NARROW_ONLY"
+        :days="dias"
+        :zone="zona"
+        :events-of="eventsOf" />
     </div>
   </WindowAppLayout>
 </template>

@@ -42,10 +42,21 @@ export function useConfigStore() {
  */
 export const CATALOGO = { es: { 'vsk.prueba': 'Traducido' } };
 
+/**
+ * Lo que contesta el programa a un comando, cuando la prueba lo dice: las
+ * cuentas y los eventos de un mes, por ejemplo. Sin respuesta puesta, el
+ * comando contesta `undefined`, como antes.
+ */
+const answers = new Map<string, unknown>();
+
+export function setAnswer(command: string, answer: unknown) {
+	answers.set(command, answer);
+}
+
 export async function invoke(comando: string) {
 	if (comando === 'plugin:i18n|load_translations') return CATALOGO;
 	if (comando === 'plugin:i18n|get_locale') return 'es';
-	return undefined;
+	return answers.get(comando);
 }
 
 /** Los oyentes registrados por evento, para poder dispararlos desde una prueba. */
@@ -102,4 +113,5 @@ export function olvidarTodo() {
 	configuracion = {};
 	listeners.clear();
 	themeIcons.clear();
+	answers.clear();
 }
