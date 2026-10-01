@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { ThemeIcon } from '@vasakgroup/vue-libvasak';
+import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted } from 'vue';
-import CuentasComponent from '@/components/calendario/CuentasComponent.vue';
-import MesComponent from '@/components/calendario/MesComponent.vue';
+import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
+import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 
@@ -34,7 +34,7 @@ const {
  * leído en la zona del sistema puede caer el último día del mes anterior. Sin
  * esto, mirar la agenda en una zona al este y el título decía el mes equivocado.
  */
-const titulo = computed(() =>
+const title = computed(() =>
 	new Intl.DateTimeFormat(locale.value, {
 		month: 'long',
 		year: 'numeric',
@@ -67,15 +67,16 @@ onMounted(cargar);
       <span v-if="cargando" class="text-tx-muted text-xs" role="status">
         {{ t('calendario.cargando') }}
       </span>
-      <button
-        type="button"
-        class="rounded-corner border border-ui-border bg-ui-bg/80 p-1 hover:bg-ui-surface disabled:opacity-50"
-        :aria-label="t('calendario.actualizar')"
+      <!-- `ghost`, como los tres botones de la ventana que tiene al lado: los
+           cuatro son controles de la barra y se leen como un grupo. -->
+      <ActionButton
+        variant="ghost"
+        label=""
+        icon="view-refresh"
+        :icon-alt="t('calendario.actualizar')"
         :title="t('calendario.actualizar')"
         :disabled="cargando"
-        @click="cargar()">
-        <ThemeIcon name="view-refresh" type="symbol" :size="24" />
-      </button>
+        @click="cargar()" />
     </template>
 
     <!-- **Centrado en el hueco que queda**, no en la ventana entera. Va en el
@@ -94,58 +95,61 @@ onMounted(cargar);
          centra es el conjunto: son una sola cosa para el ojo, y centrar el mes
          solo dejaría al botón colgando de un lado. -->
     <template #barra>
-      <div class="m-auto flex items-center gap-2">
+      <div class="m-auto flex min-w-0 items-center gap-2">
         <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
              ir atrás a la izquierda de lo que se está mirando y la de ir adelante
              a la derecha. -->
-        <div class="flex items-center gap-1">
-          <button
-            type="button"
-            class="rounded-corner p-1 hover:bg-ui-surface"
-            :aria-label="t('calendario.mesAnterior')"
-            @click="mesAnterior()">
-            <ThemeIcon name="go-previous" type="symbol" :size="20" />
-          </button>
+        <div class="flex min-w-0 items-center gap-1">
+          <ActionButton
+            variant="ghost"
+            label=""
+            icon="go-previous"
+            :icon-alt="t('calendario.mesAnterior')"
+            @click="mesAnterior()" />
           <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
                único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
                otra pista. -->
           <!-- `first-letter` y no `capitalize`: lo segundo sube **cada** palabra
                y el título salía «Septiembre De 2026». En español sólo va la
                primera, y el nombre del mes lo escribe `Intl` en minúscula. -->
+          <!-- `w-44` y no `min-w-44`: el mismo ancho fijo para que las flechas no
+               se muevan al cambiar de mes, pero que ceda —recortado— cuando la
+               barra no tiene lugar, en vez de empujar las flechas fuera. -->
           <h1
-            class="min-w-44 text-center font-title text-base first-letter:uppercase"
+            class="w-44 min-w-0 truncate text-center font-title text-base first-letter:uppercase"
             aria-live="polite">
-            {{ titulo }}
+            {{ title }}
           </h1>
-          <button
-            type="button"
-            class="rounded-corner p-1 hover:bg-ui-surface"
-            :aria-label="t('calendario.mesSiguiente')"
-            @click="mesSiguiente()">
-            <ThemeIcon name="go-next" type="symbol" :size="20" />
-          </button>
+          <ActionButton
+            variant="ghost"
+            label=""
+            icon="go-next"
+            :icon-alt="t('calendario.mesSiguiente')"
+            @click="mesSiguiente()" />
         </div>
 
-        <button
-          type="button"
-          class="rounded-corner border border-ui-border-strong px-2 py-0.5 text-sm hover:bg-ui-surface"
-          @click="irAHoy()">
-          {{ t('calendario.hoy') }}
-        </button>
+        <!-- `shrink-0`: en una barra angosta cede el título del mes, que se
+             recorta, y no «Hoy», que partido en letras no se lee. -->
+        <ActionButton
+          variant="secondary"
+          size="sm"
+          class="shrink-0"
+          :label="t('calendario.hoy')"
+          @click="irAHoy()" />
       </div>
     </template>
 
     <!-- Las secciones separadas por aire y no por líneas: cada una es una
          superficie redondeada, como los paneles del escritorio. -->
-    <CuentasComponent
-      :cuentas="cuentas"
-      :calendarios="calendarios"
-      :avisos="avisos"
-      :zona="zona"
-      :zona-elegida="zonaElegida"
-      :zona-del-sistema="zonaDelSistema"
-      :zona-ajena="zonaAjena"
-      @elegir-zona="elegirZona" />
-    <MesComponent :dias="dias" :zona="zona" :events-of="eventsOf" />
+    <AccountsPanel
+      :accounts="cuentas"
+      :calendars="calendarios"
+      :notices="avisos"
+      :zone="zona"
+      :chosen-zone="zonaElegida"
+      :system-zone="zonaDelSistema"
+      :foreign-zone="zonaAjena"
+      @choose-zone="elegirZona" />
+    <MonthGrid :days="dias" :zone="zona" :events-of="eventsOf" />
   </WindowAppLayout>
 </template>

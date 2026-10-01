@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { AppBar, olvidarLosIconosDelTema, WindowControls, WindowFrame } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import CalendarioView from '@/views/CalendarioView.vue';
+import CalendarView from '@/views/CalendarView.vue';
 import { olvidarTodo } from './dobles';
 
 let vista: VueWrapper | null = null;
@@ -22,7 +22,7 @@ let vista: VueWrapper | null = null;
 const sueltos: VueWrapper[] = [];
 
 function abrir() {
-	vista = mount(CalendarioView);
+	vista = mount(CalendarView);
 	return vista;
 }
 

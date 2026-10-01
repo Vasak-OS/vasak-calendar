@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import CalendarioView from '@/views/CalendarioView.vue';
+import CalendarView from '@/views/CalendarView.vue';
 import { emit, olvidarTodo, setThemeIcon } from './dobles';
 
 /**
@@ -54,7 +54,7 @@ async function advancePastReload() {
 let mounted: VueWrapper | null = null;
 
 function openCalendar() {
-	mounted = mount(CalendarioView);
+	mounted = mount(CalendarView);
 	return mounted;
 }
 

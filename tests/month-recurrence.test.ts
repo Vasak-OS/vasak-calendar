@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import MesComponent from '@/components/calendario/MesComponent.vue';
+import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import { type CalendarEvent, cuadricula } from '@/tools/mes';
 
 let vista: VueWrapper | null = null;
@@ -38,17 +38,14 @@ function event(extra: Partial<CalendarEvent>): CalendarEvent {
 
 function marksFor(extra: Partial<CalendarEvent>): string[] {
 	const dias = cuadricula(new Date('2026-09-15T12:00:00Z'), 'UTC');
-	vista = mount(MesComponent, {
+	vista = mount(MonthGrid, {
 		props: {
-			dias,
-			zona: 'UTC',
+			days: dias,
+			zone: 'UTC',
 			eventsOf: (clave: string) => (clave === '2026-09-15' ? [event(extra)] : []),
 		},
 	});
-	return vista
-		.findAll('span[aria-label]')
-		.filter((s) => s.text() === '↻')
-		.map((s) => s.attributes('aria-label') ?? '');
+	return vista.findAll('[data-testid="recurrence-mark"]').map((s) => s.attributes('aria-label') ?? '');
 }
 
 describe('la marca de repetición', () => {
