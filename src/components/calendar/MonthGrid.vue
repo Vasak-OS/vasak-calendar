@@ -263,7 +263,7 @@ function overflowSummary(count: number): string {
                   <ThemeIcon name="media-playlist-repeat" type="symbol" :size="12" alt="" />
                 </span>
               </li>
-              <li v-if="overflowOf(day) > 0" class="truncate px-1 text-tx-muted text-xs">
+              <li v-if="overflowOf(day) > 0" class="break-words px-1 text-tx-muted text-xs">
                 {{ overflowSummary(overflowOf(day)) }}
               </li>
             </ul>
