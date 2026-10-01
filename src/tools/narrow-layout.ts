@@ -25,6 +25,13 @@
  */
 export type Pane = 'accounts' | 'month';
 
+/**
+ * El umbral, en rem, para lo que lo mide con `ResizeObserver` (la barra, que
+ * queda fuera de la fila). Tiene que ser el mismo número que el de las clases
+ * de abajo: hay una prueba que lo compara.
+ */
+export const NARROW_ROW_REM = 36;
+
 /** Con la ventana angosta, la columna que se ve ocupa toda la fila. */
 export const PANE_SHOWN =
 	'@max-[36rem]/row:w-full @max-[36rem]/row:max-w-none @max-[36rem]/row:flex-1';

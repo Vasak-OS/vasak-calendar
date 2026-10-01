@@ -20,10 +20,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { compile } from '@tailwindcss/node';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
+import { AppBar } from '@vasakgroup/vue-libvasak';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
+import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
+import { isNarrowWidth } from '@/composables/use-narrow-row';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import {
 	NARROW_ONLY,
+	NARROW_ROW_REM,
 	PANE_HIDDEN,
 	PANE_SHOWN,
 	type Pane,
@@ -33,8 +37,10 @@ import CalendarView from '@/views/CalendarView.vue';
 import { olvidarTodo } from './dobles';
 
 let view: VueWrapper | null = null;
+const realObserver = globalThis.ResizeObserver;
 
 afterEach(() => {
+	globalThis.ResizeObserver = realObserver;
 	view?.unmount();
 	view = null;
 	document.body.innerHTML = '';
@@ -135,8 +141,15 @@ describe('la ventana angosta', () => {
 	test('el botón de cada columna sólo existe con la ventana angosta', () => {
 		const wrapper = open();
 		for (const name of ['month', 'accounts'] as const) {
-			const holder = navButton(wrapper, name).element.parentElement as HTMLElement;
-			expect(holder.className).toContain(NARROW_ONLY);
+			// Algún envoltorio del botón, dentro de su columna, se oculta con la
+			// ventana ancha.
+			let node: HTMLElement | null = navButton(wrapper, name).element as HTMLElement;
+			let hidden = false;
+			while (node && node !== pane(wrapper, name).element) {
+				if (node.className.includes(NARROW_ONLY)) hidden = true;
+				node = node.parentElement;
+			}
+			expect(hidden).toBe(true);
 		}
 	});
 
@@ -195,5 +208,90 @@ describe('la ventana angosta', () => {
 		expect(classes).toContain('max-w-[40%]');
 		expect(PANE_SHOWN).toContain('row:w-full');
 		expect(PANE_SHOWN).toContain('row:max-w-none');
+	});
+});
+
+/**
+ * Un `ResizeObserver` de mentira que dice que la fila mide `width`.
+ *
+ * happy-dom no maqueta: `clientWidth` da cero y el observador de verdad no
+ * avisa nunca. Este pone el ancho en el elemento y avisa al observar, que es lo
+ * que hace el motor la primera vez.
+ */
+function fakeRowWidth(width: number) {
+	globalThis.ResizeObserver = class {
+		constructor(private readonly callback: ResizeObserverCallback) {}
+		observe(element: Element) {
+			Object.defineProperty(element, 'clientWidth', { configurable: true, value: width });
+			this.callback([], this as unknown as ResizeObserver);
+		}
+		unobserve() {}
+		disconnect() {}
+	} as unknown as typeof ResizeObserver;
+}
+
+describe('la medida de la fila', () => {
+	test('angosta por debajo de 36 rem, ancha desde ahí', () => {
+		expect(isNarrowWidth(575, 16)).toBe(true);
+		expect(isNarrowWidth(576, 16)).toBe(false);
+		expect(isNarrowWidth(230, 16)).toBe(true);
+	});
+
+	test('cero es «todavía no se maquetó» y no angosta', () => {
+		expect(isNarrowWidth(0, 16)).toBe(false);
+	});
+
+	test('el umbral medido es el mismo que el de las clases', () => {
+		// Si uno cambia sin el otro, hay un tramo de anchos en que la barra y
+		// la tira muestran el mes las dos, o ninguna.
+		expect(PANE_SHOWN).toContain(`@max-[${NARROW_ROW_REM}rem]/row:`);
+		expect(NARROW_ONLY).toContain(`@min-[${NARROW_ROW_REM}rem]/row:`);
+	});
+});
+
+describe('la barra con la ventana angosta', () => {
+	function barNavigation(wrapper: VueWrapper) {
+		return wrapper
+			.findComponent(AppBar)
+			.findAllComponents(MonthNavigation)
+			.filter((nav) => !nav.props('fluid'));
+	}
+
+	test('ancha, el mes y «Hoy» siguen en la barra', async () => {
+		fakeRowWidth(900);
+		const wrapper = open();
+		await settle();
+		expect(barNavigation(wrapper)).toHaveLength(1);
+		expect(wrapper.findComponent(AppBar).text()).toContain('calendario.hoy');
+	});
+
+	test('angosta, se mudan a la tira del mes y la barra no se pisa', async () => {
+		fakeRowWidth(230);
+		const wrapper = open();
+		await settle();
+		expect(barNavigation(wrapper)).toHaveLength(0);
+		expect(wrapper.findComponent(AppBar).text()).not.toContain('calendario.hoy');
+
+		// En la tira están las dos cosas, con el título libre de ocupar lo que
+		// quede: a 240 px el ancho fijo de la barra lo cortaba.
+		const strip = pane(wrapper, 'month');
+		const nav = strip.findComponent(MonthNavigation);
+		expect(nav.props('fluid')).toBe(true);
+		expect(nav.get('h1').classes()).toContain('flex-1');
+		expect(strip.text()).toContain('calendario.hoy');
+	});
+
+	test('las flechas de la tira mueven el mes como las de la barra', async () => {
+		fakeRowWidth(230);
+		const wrapper = open();
+		await settle();
+		const nav = pane(wrapper, 'month').findComponent(MonthNavigation);
+		const before = nav.get('h1').text();
+		await nav.get('[aria-label="calendario.mesSiguiente"]').trigger('click');
+		await settle();
+		expect(nav.get('h1').text()).not.toBe(before);
+		await nav.get('[aria-label="calendario.mesAnterior"]').trigger('click');
+		await settle();
+		expect(nav.get('h1').text()).toBe(before);
 	});
 });

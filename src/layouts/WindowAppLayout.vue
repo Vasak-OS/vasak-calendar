@@ -22,19 +22,31 @@
  * entera— y queda para lo que de verdad lo necesite; acá ya no lo usa nadie.
  */
 import { WindowFrame } from '@vasakgroup/vue-libvasak';
+import { ref } from 'vue';
+import { useNarrowRow } from '@/composables/use-narrow-row';
+
+/**
+ * La fila, medida. Las columnas se acomodan solas por la consulta de
+ * contenedor, pero la barra queda **fuera** de la fila y no la puede
+ * consultar: con la ventana angosta no tiene lugar ni para el título del mes, y
+ * quien la llena necesita saberlo para mudarlo. Se lo dice `narrow`, por la
+ * ranura.
+ */
+const row = ref<HTMLElement | null>(null);
+const narrow = useNarrowRow(row);
 </script>
 
 <template>
   <WindowFrame>
     <template v-if="$slots.identidad" #identidad><slot name="identidad" /></template>
-    <template v-if="$slots.barra" #barra><slot name="barra" /></template>
+    <template v-if="$slots.barra" #barra><slot name="barra" :narrow="narrow" /></template>
     <template v-if="$slots.barraCentro" #centro><slot name="barraCentro" /></template>
     <template v-if="$slots.acciones" #acciones><slot name="acciones" /></template>
 
     <!-- La fila es un contenedor con nombre (`row`): con la ventana angosta
          va una columna por vez, y eso lo decide el ancho de la fila, no el de
          la pantalla (ver `tools/narrow-layout.ts`). -->
-    <div class="@container/row flex min-h-0 min-w-0 flex-1 gap-1 p-1">
+    <div ref="row" class="@container/row flex min-h-0 min-w-0 flex-1 gap-1 p-1">
       <slot />
     </div>
   </WindowFrame>

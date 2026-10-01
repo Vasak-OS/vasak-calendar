@@ -4,6 +4,7 @@ import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
+import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import { NARROW_ONLY, type Pane, paneClass } from '@/tools/narrow-layout';
@@ -116,39 +117,13 @@ onMounted(cargar);
          El mes y «Hoy» van dentro del mismo envoltorio, así que lo que se
          centra es el conjunto: son una sola cosa para el ojo, y centrar el mes
          solo dejaría al botón colgando de un lado. -->
-    <template #barra>
-      <div class="m-auto flex min-w-0 items-center gap-2">
-        <!-- El mes **entre** las flechas, que es donde la gente las busca: la de
-             ir atrás a la izquierda de lo que se está mirando y la de ir adelante
-             a la derecha. -->
-        <div class="flex min-w-0 items-center gap-1">
-          <ActionButton
-            variant="ghost"
-            label=""
-            icon="go-previous"
-            :icon-alt="t('calendario.mesAnterior')"
-            @click="mesAnterior()" />
-          <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
-               único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
-               otra pista. -->
-          <!-- `first-letter` y no `capitalize`: lo segundo sube **cada** palabra
-               y el título salía «Septiembre De 2026». En español sólo va la
-               primera, y el nombre del mes lo escribe `Intl` en minúscula. -->
-          <!-- `w-44` y no `min-w-44`: el mismo ancho fijo para que las flechas no
-               se muevan al cambiar de mes, pero que ceda —recortado— cuando la
-               barra no tiene lugar, en vez de empujar las flechas fuera. -->
-          <h1
-            class="w-44 min-w-0 truncate text-center font-title text-base first-letter:uppercase"
-            aria-live="polite">
-            {{ title }}
-          </h1>
-          <ActionButton
-            variant="ghost"
-            label=""
-            icon="go-next"
-            :icon-alt="t('calendario.mesSiguiente')"
-            @click="mesSiguiente()" />
-        </div>
+    <template #barra="{ narrow }">
+      <!-- Con la ventana angosta la barra no tiene lugar ni para el título: a
+           240 px el mes y sus flechas desaparecían y «Hoy» quedaba encima de la
+           flecha. Ahí se mudan a la tira de arriba del mes, y la barra se queda
+           con el icono, actualizar y los tres botones de la ventana. -->
+      <div v-if="!narrow" class="m-auto flex min-w-0 items-center gap-2">
+        <MonthNavigation :title="title" @previous="mesAnterior()" @next="mesSiguiente()" />
 
         <!-- `shrink-0`: en una barra angosta cede el título del mes, que se
              recorta, y no «Hoy», que partido en letras no se lee. -->
@@ -182,14 +157,35 @@ onMounted(cargar);
       data-pane="month"
       class="flex min-h-0 min-w-0 flex-1 flex-col gap-1"
       :class="paneClass('month', pane)">
-      <div class="flex shrink-0" :class="NARROW_ONLY" data-nav="month">
-        <ActionButton
-          variant="ghost"
-          size="sm"
-          icon="go-previous"
-          icon-type="symbol"
-          :label="t('nav.accounts')"
-          @click="go('accounts')" />
+      <!-- La tira de la ventana angosta: el botón de las cuentas, «Hoy» y el
+           mes entre sus flechas, que en la barra ya no entran. En dos renglones
+           mientras la fila no da para uno —a 240 px el título se cortaría—, y
+           en uno desde 22 rem, con el mes en el medio como en la barra. -->
+      <div class="@container/strip shrink-0" :class="NARROW_ONLY">
+        <div
+          class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1">
+          <div class="col-start-1 row-start-1 flex" data-nav="month">
+            <ActionButton
+              variant="ghost"
+              size="sm"
+              icon="go-previous"
+              icon-type="symbol"
+              :label="t('nav.accounts')"
+              @click="go('accounts')" />
+          </div>
+          <ActionButton
+            variant="secondary"
+            size="sm"
+            class="col-start-3 row-start-1"
+            :label="t('calendario.hoy')"
+            @click="irAHoy()" />
+          <MonthNavigation
+            fluid
+            class="col-span-3 row-start-2 @min-[22rem]/strip:col-span-1 @min-[22rem]/strip:col-start-2 @min-[22rem]/strip:row-start-1"
+            :title="title"
+            @previous="mesAnterior()"
+            @next="mesSiguiente()" />
+        </div>
       </div>
       <MonthGrid :days="dias" :zone="zona" :events-of="eventsOf" />
     </div>
