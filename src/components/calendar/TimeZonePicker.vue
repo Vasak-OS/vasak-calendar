@@ -1,22 +1,27 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { type OpcionDeBusqueda, SearchSelect } from '@vasakgroup/vue-libvasak';
+import {
+	type OpcionDeBusqueda,
+	SearchSelect,
+	SectionHeading,
+	StatusDot,
+} from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import { interpolar } from '@/tools/interpolar';
 import { zonasConocidas } from '@/tools/zona';
 
 const props = defineProps<{
 	/** La elegida, o vacío si se sigue a la del sistema. */
-	elegida: string;
+	chosen: string;
 	/** En cuál está el sistema, para nombrarla en la opción de arriba. */
-	delSistema: string;
+	systemZone: string;
 	/** La que se está usando, que es la elegida o la del sistema. */
-	enUso: string;
+	activeZone: string;
 	/** Si lo que se está mirando no es la hora de acá. */
-	ajena: boolean;
+	foreign: boolean;
 }>();
 
-const emit = defineEmits<(e: 'elegir', zona: string) => void>();
+const emit = defineEmits<(e: 'choose', zone: string) => void>();
 
 const { t } = useI18n();
 
@@ -36,25 +41,25 @@ const { t } = useI18n();
  * Buscar sigue encontrando por el nombre entero: el `valor` de la opción es el
  * de IANA sin tocar, y `buscarOpciones` mira los tres campos.
  */
-const zonas = computed<OpcionDeBusqueda[]>(() => [
+const zoneOptions = computed<OpcionDeBusqueda[]>(() => [
 	{
 		valor: '',
 		etiqueta: t('calendario.zonaDelSistema'),
-		detalle: ciudad(props.delSistema),
+		detalle: cityOf(props.systemZone),
 	},
 	...zonasConocidas()
-		.filter((z) => z !== props.delSistema)
-		.map((z) => ({ valor: z, etiqueta: ciudad(z), detalle: region(z) })),
+		.filter((z) => z !== props.systemZone)
+		.map((z) => ({ valor: z, etiqueta: cityOf(z), detalle: regionOf(z) })),
 ]);
 
 /** La última parte de un nombre de IANA, que es la ciudad. */
-function ciudad(zona: string): string {
-	return legible(zona.split('/').pop() ?? zona);
+function cityOf(zone: string): string {
+	return readable(zone.split('/').pop() ?? zone);
 }
 
 /** Lo que va antes de la ciudad: `America/Argentina` en Buenos Aires. */
-function region(zona: string): string {
-	return legible(zona.split('/').slice(0, -1).join('/'));
+function regionOf(zone: string): string {
+	return readable(zone.split('/').slice(0, -1).join('/'));
 }
 
 /**
@@ -65,27 +70,25 @@ function region(zona: string): string {
  * porque es el que ve en todos lados. Lo único que se toca son los guiones bajos,
  * que se leen mal y no cambian de qué zona se habla.
  */
-function legible(zona: string): string {
-	return zona.replace(/_/g, ' ');
+function readable(zone: string): string {
+	return zone.replace(/_/g, ' ');
 }
 </script>
 
 <template>
   <section class="flex flex-col gap-1">
-    <h2 class="font-medium text-tx-muted text-xs uppercase">
-      {{ t('calendario.zonaEtiqueta') }}
-    </h2>
+    <SectionHeading as="h2" :title="t('calendario.zonaEtiqueta')" />
     <!-- Dibujado por la aplicación y no por el sistema: ver `SearchSelect` de la librería.
          Hacia arriba porque esto vive al pie del panel, y hacia abajo el menú se
          saldría de la ventana. -->
     <SearchSelect
-      :model-value="props.elegida"
-      :options="zonas"
+      :model-value="props.chosen"
+      :options="zoneOptions"
       :label="t('calendario.zonaEtiqueta')"
       :search-placeholder="t('calendario.zonaBuscar')"
       :empty-text="t('calendario.zonaSinResultados')"
       up
-      @update:model-value="emit('elegir', $event)" />
+      @update:model-value="emit('choose', $event)" />
 
     <!-- El nombre de la zona va **abajo y no adentro** del desplegable.
          «La del sistema (America/Argentina/Buenos Aires)» no entra en el ancho
@@ -94,12 +97,17 @@ function legible(zona: string): string {
 
          Y que la agenda no esté en la hora de acá se dice, no se deduce: quien
          fijó una zona para viajar se olvida, y una agenda que muestra horas de
-         otro país sin avisar se lee mal sin que nada lo delate. -->
+         otro país sin avisar se lee mal sin que nada lo delate.
+
+         El aviso lleva el punto del tono y el texto en el color de siempre: el
+         amarillo del esquema como color de **texto** no llega a 4,5:1 sobre el
+         panel en claro, y lo que importa es que se lea. -->
     <p
-      class="break-words text-xs"
-      :class="props.ajena ? 'text-status-warning' : 'text-tx-muted'"
-      :role="props.ajena ? 'status' : undefined">
-      {{ props.ajena ? interpolar(t('calendario.viendoEn'), legible(props.enUso)) : legible(props.enUso) }}
+      class="flex items-start gap-1.5 break-words text-xs"
+      :class="props.foreign ? 'text-tx-main' : 'text-tx-muted'"
+      :role="props.foreign ? 'status' : undefined">
+      <StatusDot v-if="props.foreign" tone="warning" class="mt-1" />
+      <span class="min-w-0">{{ props.foreign ? interpolar(t('calendario.viendoEn'), readable(props.activeZone)) : readable(props.activeZone) }}</span>
     </p>
   </section>
 </template>

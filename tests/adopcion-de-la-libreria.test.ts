@@ -20,14 +20,20 @@ import { fileURLToPath } from 'node:url';
 import { SearchSelect } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import ZonaComponent from '@/components/calendario/ZonaComponent.vue';
+import TimeZonePicker from '@/components/calendar/TimeZonePicker.vue';
 import { olvidarTodo } from './dobles';
 
 let vista: VueWrapper | null = null;
 
 function armar(props: Record<string, unknown> = {}) {
-	vista = mount(ZonaComponent, {
-		props: { elegida: '', delSistema: 'America/Argentina/Buenos_Aires', enUso: 'America/Argentina/Buenos_Aires', ajena: false, ...props },
+	vista = mount(TimeZonePicker, {
+		props: {
+			chosen: '',
+			systemZone: 'America/Argentina/Buenos_Aires',
+			activeZone: 'America/Argentina/Buenos_Aires',
+			foreign: false,
+			...props,
+		},
 		attachTo: document.body,
 	});
 	return vista;
@@ -93,7 +99,7 @@ describe('el selector de zona', () => {
 		elSelector(v).vm.$emit('update:modelValue', 'Europe/Madrid');
 		await nextTick();
 
-		expect(v.emitted('elegir')?.[0]).toEqual(['Europe/Madrid']);
+		expect(v.emitted('choose')?.[0]).toEqual(['Europe/Madrid']);
 	});
 });
 
@@ -124,7 +130,7 @@ describe('el composable de iconos del molde', () => {
 		// Sin esto las dos de abajo pasan sobre una lista vacía, que es en lo
 		// que quedan si el patrón deja de encontrar archivos. Una guardia que se
 		// apaga sola dice que sí.
-		expect(fuentes).toContain('views/CalendarioView.vue');
+		expect(fuentes).toContain('views/CalendarView.vue');
 		expect(fuentes.length).toBeGreaterThan(5);
 	});
 
