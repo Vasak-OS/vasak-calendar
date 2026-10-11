@@ -1029,11 +1029,16 @@ mod tests {
 
     /// El `TZID` entre comillas, que es como lo escribe un cliente cuando el
     /// nombre tiene barras o espacios.
+    ///
+    /// Con un nombre de IANA de verdad (`Buenos_Aires`, con guion bajo). Decía
+    /// `Buenos Aires` con espacio, que no es un nombre de IANA: caía en hora
+    /// flotante, o sea la hora local de quien corre la prueba, y pasaba sólo en
+    /// una máquina en hora de Argentina. En el CI, que está en UTC, fallaba.
     #[test]
     fn el_tzid_entre_comillas_se_resuelve_igual() {
         let (momento, _) = instant_of(
             "20260915T140000",
-            &[r#"TZID="America/Argentina/Buenos Aires""#.into()],
+            &[r#"TZID="America/Argentina/Buenos_Aires""#.into()],
             &Zonas::default(),
         )
         .unwrap();
