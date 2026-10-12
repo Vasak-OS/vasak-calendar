@@ -3,7 +3,6 @@
 //! Lo que hay acá no es decoración: cada pieza resuelve algo que en las
 //! aplicaciones reales del escritorio se rompió al menos una vez.
 
-mod almacen;
 mod caldav;
 mod comandos;
 mod cuentas;
@@ -11,6 +10,7 @@ mod dav;
 mod locales;
 mod recurrence;
 mod reloj;
+mod store;
 mod ventana;
 mod zonas;
 
@@ -49,7 +49,7 @@ pub fn run() {
         // arrancar: ver la cabecera de `reloj.rs`.
         .setup(|app| {
             reloj::escuchar(app.handle().clone());
-            almacen::escuchar(app.handle().clone());
+            store::watch(app.handle().clone());
             // La ventana nace oculta y la muestra el frontend cuando ya tiene los
             // textos y el tema. Esto la muestra igual si el frontend nunca llega:
             // ver `ventana.rs`.

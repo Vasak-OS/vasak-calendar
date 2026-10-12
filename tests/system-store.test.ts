@@ -11,7 +11,7 @@
  *   cuenta por cuenta como antes;
  * - que «Actualizar» le pide una vuelta al sincronizador y relee, aunque el
  *   pedido falle;
- * - que el aviso `calendario-cambio` relee el mes, y que al cerrar la ventana
+ * - que el aviso `calendar-changed` relee el mes, y que al cerrar la ventana
  *   se deja de escucharlo, también si se cerró antes de engancharse.
  */
 
@@ -25,7 +25,7 @@ import { rangoDe } from '@/tools/mes';
 import CalendarView from '@/views/CalendarView.vue';
 import { emit, invocations, olvidarTodo, setAnswer, setFailure, timesInvoked } from './dobles';
 
-const STORE_EVENT = 'calendario-cambio';
+const STORE_EVENT = 'calendar-changed';
 
 let scope: EffectScope | null = null;
 let mounted: VueWrapper | null = null;
@@ -83,7 +83,7 @@ const FROM_STORE = {
 	calendarios: [{ url: 'google/1', nombre: 'Personal', color: '#3366FF' }],
 	eventos: [event({ uid: 'del-almacen' })],
 	fallos: ['hay eventos que no se pudieron expandir del todo'],
-	disponible: true,
+	available: true,
 };
 
 describe('el mes sale del almacén del sistema', () => {
@@ -116,7 +116,7 @@ describe('el mes sale del almacén del sistema', () => {
 
 	test('sin calendarios en el almacén se lee cuenta por cuenta, como antes', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], disponible: false });
+		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: false });
 		setAnswer('account_events', FROM_ACCOUNT);
 		const calendar = open();
 
@@ -126,7 +126,7 @@ describe('el mes sale del almacén del sistema', () => {
 		expect(calendar.eventos.value.map((e) => e.uid)).toEqual(['de-la-cuenta', 'de-la-cuenta']);
 	});
 
-	test('una respuesta del almacén sin «disponible» no se toma como el mes', async () => {
+	test('una respuesta del almacén sin «available» no se toma como el mes', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', { calendarios: [], eventos: [event({ uid: 'fantasma' })], fallos: [] });
 		setAnswer('account_events', FROM_ACCOUNT);
@@ -164,7 +164,7 @@ describe('el mes sale del almacén del sistema', () => {
 			ACCOUNTS[0],
 			{ id: 'vencida', nombre: 'vieja', necesita_reconectarse: true },
 		]);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], disponible: false });
+		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: false });
 		setAnswer('account_events', FROM_ACCOUNT);
 		const calendar = open();
 
@@ -178,7 +178,7 @@ describe('el mes sale del almacén del sistema', () => {
 
 	test('una lista de cuentas que no es lista deja la ventana sin cuentas y sin avisos', async () => {
 		setAnswer('listar_cuentas', null);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], disponible: false });
+		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: false });
 		const calendar = open();
 
 		await calendar.cargar();
@@ -198,7 +198,7 @@ describe('«Actualizar»', () => {
 		await calendar.cargar();
 		invocations.length = 0;
 
-		await calendar.actualizar();
+		await calendar.refresh();
 
 		const commands = invocations.map((i) => i.command);
 		expect(commands[0]).toBe('request_sync');
@@ -217,7 +217,7 @@ describe('«Actualizar»', () => {
 		console.error = () => {};
 
 		try {
-			await calendar.actualizar();
+			await calendar.refresh();
 		} finally {
 			console.error = realError;
 		}

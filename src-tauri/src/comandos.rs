@@ -16,10 +16,10 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri_plugin_vsk_journal::DiarioExt;
 
-use crate::almacen::{self, LecturaDelAlmacen};
 use crate::caldav::{self, Calendario, Event};
 use crate::cuentas::{self, CuentaConCalendario};
 use crate::recurrence::Window;
+use crate::store::{self, StoreReading};
 
 /// Un evento y de qué calendario salió.
 ///
@@ -107,19 +107,19 @@ pub async fn account_events<R: tauri::Runtime>(
 
 /// Los eventos de **todas** las cuentas entre dos momentos, del almacén del
 /// sistema: ya sincronizados y con las series expandidas, sin esperar a la
-/// red. Con `disponible: false` la ventana lee como antes, cuenta por cuenta.
+/// red. Con `available: false` la ventana lee como antes, cuenta por cuenta.
 #[tauri::command]
-pub async fn store_events(from: String, to: String) -> Result<LecturaDelAlmacen, String> {
+pub async fn store_events(from: String, to: String) -> Result<StoreReading, String> {
     // Se valida igual que el camino de cada cuenta: un rango dado vuelta se ve
     // igual que un mes vacío.
     rango(&from, &to)?;
-    almacen::eventos(&from, &to).await
+    store::read_events(&from, &to).await
 }
 
 /// El botón «Actualizar»: pide al sincronizador que traiga ya lo nuevo.
 #[tauri::command]
 pub async fn request_sync(account_ids: Vec<String>) {
-    almacen::pedir_sincronizacion(&account_ids).await
+    store::request_sync(&account_ids).await
 }
 
 /// Lee el rango que mandó la ventana.

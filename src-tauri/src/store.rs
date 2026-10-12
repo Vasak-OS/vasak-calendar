@@ -8,7 +8,7 @@
 //! mes aparece al abrir, y las repeticiones ya vienen expandidas.
 //!
 //! Lo nuevo se avisa con la señal `Changed("calendar", …)`, que se pasa a la
-//! ventana como el evento [`EVENTO`]; el botón «Actualizar» le pide al
+//! ventana como el evento [`CHANGED_EVENT`]; el botón «Actualizar» le pide al
 //! sincronizador una vuelta ya, con `RequestSync`.
 //!
 //! La primera lectura puede abrir el diálogo de `vasak-permissions`
@@ -19,27 +19,30 @@ use serde::{Deserialize, Serialize};
 use crate::caldav::{Calendario, Event};
 use crate::comandos::{EventInCalendar, LecturaDeCuenta};
 
-const SERVICIO: &str = "ar.net.vasak.os.AccountsSync";
-const RUTA: &str = "/ar/net/vasak/os/AccountsStore";
-const INTERFAZ: &str = "ar.net.vasak.os.AccountsStore";
+const SERVICE: &str = "ar.net.vasak.os.AccountsSync";
+const PATH: &str = "/ar/net/vasak/os/AccountsStore";
+const INTERFACE: &str = "ar.net.vasak.os.AccountsStore";
 
 /// El aviso a la ventana de que cambió lo guardado del calendario.
-pub const EVENTO: &str = "calendario-cambio";
+pub const CHANGED_EVENT: &str = "calendar-changed";
+
+/// Cuánto se juntan los avisos seguidos antes de pasarlos a la ventana.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Cuántas ocurrencias se piden por página: el máximo que acepta el almacén.
-const PAGINA: u32 = 1000;
+const PAGE_SIZE: u32 = 1000;
 
 /// Cuántas páginas se leen como mucho para un rango. Seis semanas con más de
 /// diez mil eventos no es una agenda, es un error; se muestra lo que entró y
 /// se avisa.
-const MAX_PAGINAS: usize = 10;
+const MAX_PAGES: usize = 10;
 
 /// El aviso de que alguna serie no se pudo expandir del todo en el rango.
-const RECORTADO: &str = "hay eventos que no se pudieron expandir del todo";
+const TRUNCATED_WARNING: &str = "hay eventos que no se pudieron expandir del todo";
 
 /// Un calendario como lo lista el almacén.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct CalendarioGuardado {
+pub struct StoredCalendar {
     pub id: String,
     #[serde(default)]
     pub account_id: String,
@@ -52,7 +55,7 @@ pub struct CalendarioGuardado {
 
 /// Una vez de un evento, como la da `ListOccurrences`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct OcurrenciaGuardada {
+pub struct StoredOccurrence {
     pub event_id: String,
     #[serde(default)]
     pub occurrence_id: String,
@@ -73,8 +76,8 @@ pub struct OcurrenciaGuardada {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct PaginaDeOcurrencias {
-    items: Vec<OcurrenciaGuardada>,
+struct OccurrencePage {
+    items: Vec<StoredOccurrence>,
     #[serde(default)]
     next_cursor: Option<String>,
     #[serde(default)]
@@ -84,28 +87,28 @@ struct PaginaDeOcurrencias {
 /// Lo que se lee del almacén para un rango: igual que lo de una cuenta, pero
 /// de todas juntas.
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
-pub struct LecturaDelAlmacen {
+pub struct StoreReading {
     #[serde(flatten)]
-    pub lectura: LecturaDeCuenta,
+    pub reading: LecturaDeCuenta,
     /// Si el almacén tiene algún calendario. Sin ninguno, la ventana lee como
     /// antes, cuenta por cuenta: el área todavía no se encendió o la primera
     /// vuelta no terminó.
-    pub disponible: bool,
+    pub available: bool,
 }
 
-async fn conectar() -> Result<zbus::Connection, String> {
+async fn connect() -> Result<zbus::Connection, String> {
     zbus::Connection::session()
         .await
         .map_err(|e| format!("no se pudo contactar al almacén del sistema: {e}"))
 }
 
-async fn llamar<A>(metodo: &str, argumentos: &A) -> Result<String, String>
+async fn call<A>(metodo: &str, argumentos: &A) -> Result<String, String>
 where
     A: serde::ser::Serialize + zbus::zvariant::DynamicType,
 {
-    conectar()
+    connect()
         .await?
-        .call_method(Some(SERVICIO), RUTA, Some(INTERFAZ), metodo, argumentos)
+        .call_method(Some(SERVICE), PATH, Some(INTERFACE), metodo, argumentos)
         .await
         .map_err(|e| format!("{metodo}: {e}"))?
         .body()
@@ -115,7 +118,7 @@ where
 
 /// Los calendarios de eventos del almacén. Las listas que sólo tienen tareas
 /// no van: no tienen nada que dibujar en la cuadrícula.
-pub fn calendarios_de(guardados: Vec<CalendarioGuardado>) -> Vec<Calendario> {
+pub fn calendars_from(guardados: Vec<StoredCalendar>) -> Vec<Calendario> {
     guardados
         .into_iter()
         .filter(|c| c.components.is_empty() || c.components.iter().any(|x| x == "VEVENT"))
@@ -131,7 +134,7 @@ pub fn calendarios_de(guardados: Vec<CalendarioGuardado>) -> Vec<Calendario> {
 ///
 /// El `uid` es el del objeto guardado: es lo que, junto con el comienzo, le da
 /// a la cuadrícula una clave única por vez.
-pub fn evento_de(o: OcurrenciaGuardada) -> EventInCalendar {
+pub fn event_from(o: StoredOccurrence) -> EventInCalendar {
     EventInCalendar {
         event: Event {
             uid: o.event_id,
@@ -152,12 +155,18 @@ pub fn evento_de(o: OcurrenciaGuardada) -> EventInCalendar {
 }
 
 /// Los calendarios y los eventos de todas las cuentas en `[desde, hasta)`.
-pub async fn eventos(desde: &str, hasta: &str) -> Result<LecturaDelAlmacen, String> {
-    let json = llamar("ListCalendars", &()).await?;
-    leer(&json, |cursor| async move {
-        llamar(
+pub async fn read_events(desde: &str, hasta: &str) -> Result<StoreReading, String> {
+    let json = call("ListCalendars", &()).await?;
+    read_pages(&json, |cursor| async move {
+        call(
             "ListOccurrences",
-            &(desde, hasta, Vec::<String>::new(), cursor.as_str(), PAGINA),
+            &(
+                desde,
+                hasta,
+                Vec::<String>::new(),
+                cursor.as_str(),
+                PAGE_SIZE,
+            ),
         )
         .await
     })
@@ -166,70 +175,70 @@ pub async fn eventos(desde: &str, hasta: &str) -> Result<LecturaDelAlmacen, Stri
 
 /// Lo que hace [`eventos`] con lo que contesta el almacén, sin el bus: la lista
 /// de calendarios ya leída, y `pagina` que pide una página por su cursor.
-async fn leer<F, Fut>(calendarios_json: &str, mut pagina: F) -> Result<LecturaDelAlmacen, String>
+async fn read_pages<F, Fut>(calendarios_json: &str, mut pagina: F) -> Result<StoreReading, String>
 where
     F: FnMut(String) -> Fut,
     Fut: std::future::Future<Output = Result<String, String>>,
 {
-    let guardados: Vec<CalendarioGuardado> = serde_json::from_str(calendarios_json)
+    let guardados: Vec<StoredCalendar> = serde_json::from_str(calendarios_json)
         .map_err(|e| format!("no se pudieron leer los calendarios: {e}"))?;
-    let calendarios = calendarios_de(guardados);
+    let calendarios = calendars_from(guardados);
     if calendarios.is_empty() {
-        return Ok(LecturaDelAlmacen::default());
+        return Ok(StoreReading::default());
     }
 
-    let mut lectura = LecturaDeCuenta {
+    let mut reading = LecturaDeCuenta {
         calendarios,
         ..Default::default()
     };
     let mut cursor = String::new();
-    for _ in 0..MAX_PAGINAS {
+    for _ in 0..MAX_PAGES {
         let json = pagina(cursor.clone()).await?;
-        let pagina: PaginaDeOcurrencias = serde_json::from_str(&json)
+        let pagina: OccurrencePage = serde_json::from_str(&json)
             .map_err(|e| format!("no se pudieron leer los eventos: {e}"))?;
         // Una vez, aunque lo digan varias páginas: el almacén lo vuelve a
         // calcular en cada una, y el mismo aviso diez veces arriba del mes no
         // dice nada más que una.
-        if pagina.truncated && !lectura.fallos.iter().any(|f| f == RECORTADO) {
-            lectura.fallos.push(RECORTADO.into());
+        if pagina.truncated && !reading.fallos.iter().any(|f| f == TRUNCATED_WARNING) {
+            reading.fallos.push(TRUNCATED_WARNING.into());
         }
-        lectura
+        reading
             .eventos
-            .extend(pagina.items.into_iter().map(evento_de));
+            .extend(pagina.items.into_iter().map(event_from));
         match pagina.next_cursor {
             Some(siguiente) if !siguiente.is_empty() => cursor = siguiente,
             _ => {
-                return Ok(LecturaDelAlmacen {
-                    lectura,
-                    disponible: true,
+                return Ok(StoreReading {
+                    reading,
+                    available: true,
                 })
             }
         }
     }
-    lectura
+    reading
         .fallos
         .push("hay más eventos en este rango de los que se pueden mostrar".into());
-    Ok(LecturaDelAlmacen {
-        lectura,
-        disponible: true,
+    Ok(StoreReading {
+        reading,
+        available: true,
     })
 }
 
 /// Le pide al sincronizador una vuelta ya de unas cuentas: el botón
-/// «Actualizar». No espera a que termine: lo nuevo se avisa con [`EVENTO`].
+/// «Actualizar». No espera a que termine: lo nuevo se avisa con [`CHANGED_EVENT`].
 ///
 /// Un fallo de una cuenta no frena a las demás. El almacén tiene un límite por
 /// llamante, y lo que ya está se sigue viendo.
-pub async fn pedir_sincronizacion(account_ids: &[String]) {
-    let Ok(conexion) = conectar().await else {
+pub async fn request_sync(account_ids: &[String]) {
+    let Ok(conexion) = connect().await else {
         return;
     };
     for id in account_ids {
         if let Err(e) = conexion
             .call_method(
-                Some(SERVICIO),
-                RUTA,
-                Some(INTERFAZ),
+                Some(SERVICE),
+                PATH,
+                Some(INTERFACE),
                 "RequestSync",
                 &(id.as_str(),),
             )
@@ -241,12 +250,12 @@ pub async fn pedir_sincronizacion(account_ids: &[String]) {
 }
 
 /// Pasa a la ventana cada `Changed("calendar", …)` del almacén.
-pub fn escuchar(app: tauri::AppHandle) {
+pub fn watch(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         // En bucle: el bus se puede cortar, y con un solo intento la ventana
         // dejaría de enterarse de lo nuevo hasta que se la cierre.
         loop {
-            if let Err(e) = seguir(&app).await {
+            if let Err(e) = follow(&app).await {
                 eprintln!("[calendario] no se pueden recibir avisos del almacén: {e}");
             }
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
@@ -258,28 +267,37 @@ pub fn escuchar(app: tauri::AppHandle) {
 ///
 /// El bus filtra por el primer argumento: un lote de correo o de contactos no
 /// despierta a esta ventana.
-fn regla_de_cambios() -> Result<zbus::MatchRule<'static>, String> {
+fn change_rule() -> Result<zbus::MatchRule<'static>, String> {
     Ok(zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface(INTERFAZ)
+        // Sólo del dueño del nombre del sincronizador y de su objeto: cualquier
+        // proceso de la sesión puede emitir una señal con esta interfaz, y cada
+        // una hace releer el mes.
+        .sender(SERVICE)
+        .and_then(|r| r.path(PATH))
+        .and_then(|r| r.interface(INTERFACE))
         .and_then(|r| r.member("Changed"))
         .and_then(|r| r.arg(0, "calendar"))
         .map_err(|e| format!("no se pudo armar el filtro del almacén: {e}"))?
         .build())
 }
 
-async fn seguir(app: &tauri::AppHandle) -> Result<(), String> {
+async fn follow(app: &tauri::AppHandle) -> Result<(), String> {
     use futures_util::StreamExt;
     use tauri::Emitter;
 
-    let conexion = conectar().await?;
-    let regla = regla_de_cambios()?;
+    let conexion = connect().await?;
+    let regla = change_rule()?;
     let mut avisos = zbus::MessageStream::for_match_rule(regla, &conexion, None)
         .await
         .map_err(|e| format!("no se pudo escuchar al almacén: {e}"))?;
     while let Some(aviso) = avisos.next().await {
         if aviso.is_ok() {
-            let _ = app.emit(EVENTO, ());
+            // Una vuelta escribe de a lotes y avisa por cada uno: los seguidos
+            // se juntan en un solo aviso a la ventana.
+            tokio::time::sleep(SETTLE).await;
+            while let Some(Some(_)) = futures_util::FutureExt::now_or_never(avisos.next()) {}
+            let _ = app.emit(CHANGED_EVENT, ());
         }
     }
     Err("el bus de sesión cerró la conexión".into())
@@ -292,7 +310,7 @@ mod tests {
 
     /// Un calendario tal como lo serializa `CalendarItem` en
     /// `vasak-accounts/sync/src/store/calendar_read.rs`.
-    fn calendario_json(id: &str, nombre: &str, components: &[&str]) -> serde_json::Value {
+    fn calendar_json(id: &str, nombre: &str, components: &[&str]) -> serde_json::Value {
         serde_json::json!({
             "id": id,
             "account_id": id.split('/').next().unwrap(),
@@ -304,7 +322,7 @@ mod tests {
 
     /// Una vez de un evento como la serializa `OccurrenceItem`, **la de antes**:
     /// con `floating` y sin `recurring` ni `shown_once`.
-    fn ocurrencia_vieja(event_id: &str) -> serde_json::Value {
+    fn old_occurrence(event_id: &str) -> serde_json::Value {
         serde_json::json!({
             "event_id": event_id,
             "occurrence_id": "0",
@@ -319,20 +337,20 @@ mod tests {
     }
 
     /// La misma, del almacén nuevo: suma `recurring` y `shown_once`.
-    fn ocurrencia_nueva(event_id: &str, recurring: bool, shown_once: bool) -> serde_json::Value {
-        let mut o = ocurrencia_vieja(event_id);
+    fn new_occurrence(event_id: &str, recurring: bool, shown_once: bool) -> serde_json::Value {
+        let mut o = old_occurrence(event_id);
         o["recurring"] = recurring.into();
         o["shown_once"] = shown_once.into();
         o
     }
 
-    fn pagina_json(items: Vec<serde_json::Value>, next: Option<&str>, truncated: bool) -> String {
+    fn page_json(items: Vec<serde_json::Value>, next: Option<&str>, truncated: bool) -> String {
         serde_json::json!({ "items": items, "next_cursor": next, "truncated": truncated })
             .to_string()
     }
 
-    fn guardado(id: &str, components: &[&str]) -> CalendarioGuardado {
-        CalendarioGuardado {
+    fn guardado(id: &str, components: &[&str]) -> StoredCalendar {
+        StoredCalendar {
             id: id.into(),
             account_id: "google".into(),
             display_name: format!("cal {id}"),
@@ -343,20 +361,21 @@ mod tests {
 
     /// Las páginas que contestaría el almacén, y los cursores con que se las
     /// pidió. Sin bus: `leer` recibe la función que pide.
-    fn leer_con(
+    fn read_with(
         calendarios: &serde_json::Value,
         paginas: Vec<Result<String, String>>,
-    ) -> (Result<LecturaDelAlmacen, String>, Vec<String>) {
+    ) -> (Result<StoreReading, String>, Vec<String>) {
         let pedidas = RefCell::new(Vec::new());
         let restantes = RefCell::new(paginas.into_iter());
-        let resultado = tauri::async_runtime::block_on(leer(&calendarios.to_string(), |cursor| {
-            pedidas.borrow_mut().push(cursor);
-            let siguiente = restantes
-                .borrow_mut()
-                .next()
-                .unwrap_or_else(|| Err("se pidió una página de más".into()));
-            async move { siguiente }
-        }));
+        let resultado =
+            tauri::async_runtime::block_on(read_pages(&calendarios.to_string(), |cursor| {
+                pedidas.borrow_mut().push(cursor);
+                let siguiente = restantes
+                    .borrow_mut()
+                    .next()
+                    .unwrap_or_else(|| Err("se pidió una página de más".into()));
+                async move { siguiente }
+            }));
         (resultado, pedidas.into_inner())
     }
 
@@ -364,7 +383,7 @@ mod tests {
 
     #[test]
     fn las_listas_de_tareas_no_entran_en_la_cuadricula() {
-        let calendarios = calendarios_de(vec![
+        let calendarios = calendars_from(vec![
             guardado("google/1", &["VEVENT"]),
             guardado("google/2", &["VTODO"]),
             guardado("google/3", &["VTODO", "VEVENT"]),
@@ -377,12 +396,12 @@ mod tests {
     /// eventos: descartarlo dejaría el mes vacío sin decir por qué.
     #[test]
     fn un_calendario_que_no_dice_que_guarda_se_dibuja() {
-        assert_eq!(calendarios_de(vec![guardado("google/1", &[])]).len(), 1);
+        assert_eq!(calendars_from(vec![guardado("google/1", &[])]).len(), 1);
     }
 
     #[test]
     fn el_calendario_guardado_llega_con_los_nombres_de_la_ventana() {
-        let calendario = calendarios_de(vec![guardado("google/7", &["VEVENT"])]).remove(0);
+        let calendario = calendars_from(vec![guardado("google/7", &["VEVENT"])]).remove(0);
         assert_eq!(
             calendario,
             Calendario {
@@ -399,9 +418,9 @@ mod tests {
     /// que lo ata a su color y a su casilla en el panel de cuentas.
     #[test]
     fn el_evento_guardado_queda_atado_a_su_calendario() {
-        let ocurrencia: OcurrenciaGuardada =
-            serde_json::from_value(ocurrencia_nueva("google/42", true, true)).unwrap();
-        let evento = evento_de(ocurrencia);
+        let ocurrencia: StoredOccurrence =
+            serde_json::from_value(new_occurrence("google/42", true, true)).unwrap();
+        let evento = event_from(ocurrencia);
         assert_eq!(evento.event.uid, "google/42");
         assert_eq!(evento.calendar, "google/1");
         assert_eq!(evento.event.title, "Reunión");
@@ -418,8 +437,8 @@ mod tests {
     /// igual: se pierde el ícono de la serie, no el evento.
     #[test]
     fn un_almacen_viejo_sin_recurring_ni_shown_once_se_lee_igual() {
-        let ocurrencia: OcurrenciaGuardada =
-            serde_json::from_value(ocurrencia_vieja("google/42")).unwrap();
+        let ocurrencia: StoredOccurrence =
+            serde_json::from_value(old_occurrence("google/42")).unwrap();
         assert!(!ocurrencia.recurring);
         assert!(!ocurrencia.shown_once);
     }
@@ -428,13 +447,13 @@ mod tests {
     /// puede ser `null`.
     #[test]
     fn la_lista_de_calendarios_del_almacen_se_lee() {
-        let mut sin_color = calendario_json("google/2", "Feriados", &["VEVENT"]);
+        let mut sin_color = calendar_json("google/2", "Feriados", &["VEVENT"]);
         sin_color["color"] = serde_json::Value::Null;
         let json = serde_json::json!([
-            calendario_json("google/1", "Personal", &["VEVENT"]),
+            calendar_json("google/1", "Personal", &["VEVENT"]),
             sin_color
         ]);
-        let guardados: Vec<CalendarioGuardado> = serde_json::from_value(json).unwrap();
+        let guardados: Vec<StoredCalendar> = serde_json::from_value(json).unwrap();
         assert_eq!(guardados.len(), 2);
         assert_eq!(guardados[0].display_name, "Personal");
         assert_eq!(guardados[0].components, ["VEVENT"]);
@@ -447,21 +466,21 @@ mod tests {
     /// como `undefined` sin ningún error.
     #[test]
     fn la_lectura_del_almacen_llega_aplanada_con_los_nombres_de_la_ventana() {
-        let lectura = LecturaDelAlmacen {
-            lectura: LecturaDeCuenta {
-                calendarios: calendarios_de(vec![guardado("google/1", &["VEVENT"])]),
-                eventos: vec![evento_de(
-                    serde_json::from_value(ocurrencia_nueva("google/42", true, false)).unwrap(),
+        let reading = StoreReading {
+            reading: LecturaDeCuenta {
+                calendarios: calendars_from(vec![guardado("google/1", &["VEVENT"])]),
+                eventos: vec![event_from(
+                    serde_json::from_value(new_occurrence("google/42", true, false)).unwrap(),
                 )],
                 fallos: vec!["algo".into()],
             },
-            disponible: true,
+            available: true,
         };
-        let json = serde_json::to_value(&lectura).unwrap();
+        let json = serde_json::to_value(&reading).unwrap();
         let mut claves: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
         claves.sort();
-        assert_eq!(claves, ["calendarios", "disponible", "eventos", "fallos"]);
-        assert_eq!(json["disponible"], true);
+        assert_eq!(claves, ["available", "calendarios", "eventos", "fallos"]);
+        assert_eq!(json["available"], true);
 
         let mut del_evento: Vec<_> = json["eventos"][0]
             .as_object()
@@ -502,58 +521,58 @@ mod tests {
     /// cuenta por cuenta. Ni siquiera se piden ocurrencias.
     #[test]
     fn sin_calendarios_de_eventos_el_almacen_no_esta_disponible() {
-        let solo_tareas = serde_json::json!([calendario_json("google/2", "Tareas", &["VTODO"])]);
-        let (lectura, pedidas) = leer_con(&solo_tareas, vec![]);
-        assert_eq!(lectura.unwrap(), LecturaDelAlmacen::default());
+        let solo_tareas = serde_json::json!([calendar_json("google/2", "Tareas", &["VTODO"])]);
+        let (reading, pedidas) = read_with(&solo_tareas, vec![]);
+        assert_eq!(reading.unwrap(), StoreReading::default());
         assert!(pedidas.is_empty(), "pidió ocurrencias: {pedidas:?}");
     }
 
     #[test]
     fn las_paginas_se_siguen_por_su_cursor_hasta_el_final() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &["VEVENT"])]);
-        let (lectura, pedidas) = leer_con(
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &["VEVENT"])]);
+        let (reading, pedidas) = read_with(
             &calendarios,
             vec![
-                Ok(pagina_json(
-                    vec![ocurrencia_nueva("google/1", false, false)],
+                Ok(page_json(
+                    vec![new_occurrence("google/1", false, false)],
                     Some("c1"),
                     false,
                 )),
-                Ok(pagina_json(
-                    vec![ocurrencia_nueva("google/2", false, false)],
+                Ok(page_json(
+                    vec![new_occurrence("google/2", false, false)],
                     Some("c2"),
                     false,
                 )),
                 // El final es `next_cursor == null`, no una página vacía.
-                Ok(pagina_json(
-                    vec![ocurrencia_nueva("google/3", false, false)],
+                Ok(page_json(
+                    vec![new_occurrence("google/3", false, false)],
                     None,
                     false,
                 )),
             ],
         );
-        let lectura = lectura.unwrap();
+        let reading = reading.unwrap();
         assert_eq!(pedidas, ["", "c1", "c2"]);
-        let uids: Vec<_> = lectura
-            .lectura
+        let uids: Vec<_> = reading
+            .reading
             .eventos
             .iter()
             .map(|e| e.event.uid.as_str())
             .collect();
         assert_eq!(uids, ["google/1", "google/2", "google/3"]);
-        assert!(lectura.disponible);
-        assert!(lectura.lectura.fallos.is_empty());
-        assert_eq!(lectura.lectura.calendarios.len(), 1);
+        assert!(reading.available);
+        assert!(reading.reading.fallos.is_empty());
+        assert_eq!(reading.reading.calendarios.len(), 1);
     }
 
     /// Un cursor vacío también es el final: si se lo siguiera, se volvería a
     /// pedir la primera página para siempre.
     #[test]
     fn un_cursor_vacio_es_el_final() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
-        let (lectura, pedidas) =
-            leer_con(&calendarios, vec![Ok(pagina_json(vec![], Some(""), false))]);
-        assert!(lectura.unwrap().disponible);
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &[])]);
+        let (reading, pedidas) =
+            read_with(&calendarios, vec![Ok(page_json(vec![], Some(""), false))]);
+        assert!(reading.unwrap().available);
         assert_eq!(pedidas, [""]);
     }
 
@@ -563,44 +582,35 @@ mod tests {
     /// que salir una sola vez arriba del mes.
     #[test]
     fn el_aviso_de_recorte_sale_una_sola_vez_aunque_lo_digan_varias_paginas() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
-        let (lectura, _) = leer_con(
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &[])]);
+        let (reading, _) = read_with(
             &calendarios,
             vec![
-                Ok(pagina_json(
-                    vec![ocurrencia_vieja("google/1")],
-                    Some("b"),
-                    true,
-                )),
-                Ok(pagina_json(
-                    vec![ocurrencia_vieja("google/1")],
-                    Some("c"),
-                    true,
-                )),
-                Ok(pagina_json(vec![ocurrencia_vieja("google/1")], None, true)),
+                Ok(page_json(vec![old_occurrence("google/1")], Some("b"), true)),
+                Ok(page_json(vec![old_occurrence("google/1")], Some("c"), true)),
+                Ok(page_json(vec![old_occurrence("google/1")], None, true)),
             ],
         );
-        assert_eq!(lectura.unwrap().lectura.fallos, vec![RECORTADO.to_string()]);
+        assert_eq!(
+            reading.unwrap().reading.fallos,
+            vec![TRUNCATED_WARNING.to_string()]
+        );
     }
 
     #[test]
     fn una_pagina_cortada_se_avisa() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
-        let (lectura, _) = leer_con(
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &[])]);
+        let (reading, _) = read_with(
             &calendarios,
-            vec![Ok(pagina_json(
-                vec![ocurrencia_vieja("google/1")],
-                None,
-                true,
-            ))],
+            vec![Ok(page_json(vec![old_occurrence("google/1")], None, true))],
         );
-        let lectura = lectura.unwrap();
-        assert_eq!(lectura.lectura.eventos.len(), 1);
-        assert_eq!(lectura.lectura.fallos.len(), 1);
+        let reading = reading.unwrap();
+        assert_eq!(reading.reading.eventos.len(), 1);
+        assert_eq!(reading.reading.fallos.len(), 1);
         assert!(
-            lectura.lectura.fallos[0].contains("expandir"),
+            reading.reading.fallos[0].contains("expandir"),
             "{:?}",
-            lectura.lectura.fallos
+            reading.reading.fallos
         );
     }
 
@@ -608,29 +618,29 @@ mod tests {
     /// muestra lo que entró y se avisa que falta.
     #[test]
     fn un_cursor_que_no_termina_se_corta_y_se_avisa() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
-        let infinitas = (0..MAX_PAGINAS + 5)
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &[])]);
+        let infinitas = (0..MAX_PAGES + 5)
             .map(|i| {
-                Ok(pagina_json(
-                    vec![ocurrencia_vieja(&format!("google/{i}"))],
+                Ok(page_json(
+                    vec![old_occurrence(&format!("google/{i}"))],
                     Some(&format!("c{i}")),
                     false,
                 ))
             })
             .collect();
-        let (lectura, pedidas) = leer_con(&calendarios, infinitas);
-        let lectura = lectura.unwrap();
-        assert_eq!(pedidas.len(), MAX_PAGINAS);
-        assert_eq!(lectura.lectura.eventos.len(), MAX_PAGINAS);
-        assert!(lectura.disponible);
+        let (reading, pedidas) = read_with(&calendarios, infinitas);
+        let reading = reading.unwrap();
+        assert_eq!(pedidas.len(), MAX_PAGES);
+        assert_eq!(reading.reading.eventos.len(), MAX_PAGES);
+        assert!(reading.available);
         assert!(
-            lectura
-                .lectura
+            reading
+                .reading
                 .fallos
                 .iter()
                 .any(|f| f.contains("más eventos")),
             "{:?}",
-            lectura.lectura.fallos
+            reading.reading.fallos
         );
     }
 
@@ -638,21 +648,21 @@ mod tests {
     /// toma como almacén caído y lee cuenta por cuenta.
     #[test]
     fn una_pagina_que_falla_o_no_se_entiende_es_un_error() {
-        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
-        let (lectura, _) = leer_con(
+        let calendarios = serde_json::json!([calendar_json("google/1", "Personal", &[])]);
+        let (reading, _) = read_with(
             &calendarios,
             vec![
-                Ok(pagina_json(vec![], Some("c1"), false)),
+                Ok(page_json(vec![], Some("c1"), false)),
                 Err("ListOccurrences: sin permiso".into()),
             ],
         );
-        assert_eq!(lectura.unwrap_err(), "ListOccurrences: sin permiso");
+        assert_eq!(reading.unwrap_err(), "ListOccurrences: sin permiso");
 
-        let (lectura, _) = leer_con(&calendarios, vec![Ok("{\"items\": 3}".into())]);
-        assert!(lectura.unwrap_err().contains("eventos"));
+        let (reading, _) = read_with(&calendarios, vec![Ok("{\"items\": 3}".into())]);
+        assert!(reading.unwrap_err().contains("eventos"));
 
-        let (lectura, pedidas) = leer_con(&serde_json::json!({"no": "es lista"}), vec![]);
-        assert!(lectura.unwrap_err().contains("calendarios"));
+        let (reading, pedidas) = read_with(&serde_json::json!({"no": "es lista"}), vec![]);
+        assert!(reading.unwrap_err().contains("calendarios"));
         assert!(pedidas.is_empty());
     }
 
@@ -662,12 +672,26 @@ mod tests {
     /// correo o de contactos no relee el mes.
     #[test]
     fn solo_los_cambios_del_calendario_despiertan_a_la_ventana() {
-        let regla = regla_de_cambios().unwrap().to_string();
+        let regla = change_rule().unwrap().to_string();
         for parte in [
             "type='signal'",
             "interface='ar.net.vasak.os.AccountsStore'",
             "member='Changed'",
             "arg0='calendar'",
+        ] {
+            assert!(regla.contains(parte), "falta {parte} en {regla}");
+        }
+    }
+
+    /// Cualquier proceso de la sesión puede emitir una señal con la interfaz
+    /// del almacén: sólo cuenta la del dueño del nombre del sincronizador, y
+    /// desde su objeto.
+    #[test]
+    fn solo_cuenta_el_changed_del_sincronizador_y_de_su_objeto() {
+        let regla = change_rule().unwrap().to_string();
+        for parte in [
+            "sender='ar.net.vasak.os.AccountsSync'",
+            "path='/ar/net/vasak/os/AccountsStore'",
         ] {
             assert!(regla.contains(parte), "falta {parte} en {regla}");
         }

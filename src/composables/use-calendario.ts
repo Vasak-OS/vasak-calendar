@@ -56,13 +56,13 @@ interface LecturaDeCuenta {
 }
 
 /** Lo que contesta el almacén del sistema: lo mismo, de todas las cuentas. */
-interface LecturaDelAlmacen extends LecturaDeCuenta {
+interface StoreReading extends LecturaDeCuenta {
 	/** Si el almacén tiene calendarios. Si no, se lee cuenta por cuenta. */
-	disponible: boolean;
+	available: boolean;
 }
 
 /** El aviso del programa de que cambió lo guardado del calendario. */
-const EVENTO_DEL_ALMACEN = 'calendario-cambio';
+const STORE_CHANGED_EVENT = 'calendar-changed';
 
 /**
  * El mes que se está mirando y lo que hay en él.
@@ -175,14 +175,14 @@ export function useCalendario() {
 			// expandidas. Sólo si el almacén todavía no tiene calendarios —el
 			// área no se encendió, la primera vuelta no terminó— se va al
 			// servidor cuenta por cuenta, como antes.
-			const delAlmacen = await leerDelAlmacen(desde, hasta);
+			const fromStore = await readFromStore(desde, hasta);
 			if (mio !== vigente) {
 				return;
 			}
-			if (delAlmacen?.disponible) {
-				calendarios.value = delAlmacen.calendarios;
-				eventos.value = delAlmacen.eventos;
-				nuevosAvisos.push(...delAlmacen.fallos);
+			if (fromStore?.available) {
+				calendarios.value = fromStore.calendarios;
+				eventos.value = fromStore.eventos;
+				nuevosAvisos.push(...fromStore.fallos);
 				return;
 			}
 
@@ -241,9 +241,9 @@ export function useCalendario() {
 	 * permiso—: quien llama lee como antes, y no se avisa nada, porque el
 	 * camino de siempre dice lo suyo si también falla.
 	 */
-	async function leerDelAlmacen(desde: string, hasta: string): Promise<LecturaDelAlmacen | null> {
+	async function readFromStore(desde: string, hasta: string): Promise<StoreReading | null> {
 		try {
-			return await invoke<LecturaDelAlmacen>('store_events', { from: desde, to: hasta });
+			return await invoke<StoreReading>('store_events', { from: desde, to: hasta });
 		} catch (e) {
 			console.error('no se pudo leer el almacén del calendario', e);
 			return null;
@@ -253,9 +253,9 @@ export function useCalendario() {
 	/**
 	 * El botón «Actualizar»: le pide al sincronizador que traiga ya lo nuevo de
 	 * cada cuenta, y relee lo que hay mientras tanto. Lo que llegue después se
-	 * avisa con [`EVENTO_DEL_ALMACEN`].
+	 * avisa con [`STORE_CHANGED_EVENT`].
 	 */
-	async function actualizar() {
+	async function refresh() {
 		try {
 			await invoke('request_sync', { accountIds: cuentas.value.map((c) => c.id) });
 		} catch (e) {
@@ -319,8 +319,8 @@ export function useCalendario() {
 
 	// Lo nuevo que trae el sincronizador en segundo plano: se relee el mes a
 	// la vista. Sin preguntar a intervalos.
-	let dejarDeEscucharAlAlmacen: UnlistenFn | null = null;
-	listen(EVENTO_DEL_ALMACEN, () => {
+	let stopWatchingStore: UnlistenFn | null = null;
+	listen(STORE_CHANGED_EVENT, () => {
 		void cargar();
 	})
 		.then((cancelar) => {
@@ -328,7 +328,7 @@ export function useCalendario() {
 				cancelar();
 				return;
 			}
-			dejarDeEscucharAlAlmacen = cancelar;
+			stopWatchingStore = cancelar;
 		})
 		.catch((e) => {
 			// Sin el aviso queda el botón de actualizar: se pierde enterarse solo.
@@ -361,7 +361,7 @@ export function useCalendario() {
 		clearInterval(latido);
 		window.removeEventListener('focus', alVolver);
 		dejarDeEscuchar?.();
-		dejarDeEscucharAlAlmacen?.();
+		stopWatchingStore?.();
 	});
 
 	return {
@@ -379,7 +379,7 @@ export function useCalendario() {
 		avisos,
 		eventsOf,
 		cargar,
-		actualizar,
+		refresh,
 		mesAnterior,
 		mesSiguiente,
 		irAHoy,
