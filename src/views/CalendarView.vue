@@ -25,6 +25,7 @@ const {
 	avisos,
 	eventsOf,
 	cargar,
+	refresh,
 	mesAnterior,
 	mesSiguiente,
 	irAHoy,
@@ -123,7 +124,7 @@ onMounted(async () => {
         :icon-alt="t('calendario.actualizar')"
         :title="t('calendario.actualizar')"
         :disabled="cargando"
-        @click="cargar()" />
+        @click="refresh()" />
     </template>
 
     <!-- **Centrado en el hueco que queda**, no en la ventana entera. Va en el

@@ -53,9 +53,30 @@ export function setAnswer(command: string, answer: unknown) {
 	answers.set(command, answer);
 }
 
-export async function invoke(comando: string) {
+/** Los comandos que deben fallar, con lo que lanzan. */
+const failures = new Map<string, unknown>();
+
+/** Hace que un comando lance, como un `Err` del lado de Rust. */
+export function setFailure(command: string, error: unknown) {
+	failures.set(command, error);
+}
+
+/**
+ * Cada comando que la ventana le pidió al programa, con sus argumentos y en
+ * orden. Los del idioma no: los pide el plugin, no la ventana.
+ */
+export const invocations: { command: string; args: unknown }[] = [];
+
+/** Cuántas veces se pidió un comando. */
+export function timesInvoked(command: string) {
+	return invocations.filter((i) => i.command === command).length;
+}
+
+export async function invoke(comando: string, args?: unknown) {
 	if (comando === 'plugin:i18n|load_translations') return CATALOGO;
 	if (comando === 'plugin:i18n|get_locale') return 'es';
+	invocations.push({ command: comando, args });
+	if (failures.has(comando)) throw failures.get(comando);
 	return answers.get(comando);
 }
 
@@ -114,4 +135,6 @@ export function olvidarTodo() {
 	listeners.clear();
 	themeIcons.clear();
 	answers.clear();
+	failures.clear();
+	invocations.length = 0;
 }

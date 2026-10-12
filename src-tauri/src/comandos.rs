@@ -19,6 +19,7 @@ use tauri_plugin_vsk_journal::DiarioExt;
 use crate::caldav::{self, Calendario, Event};
 use crate::cuentas::{self, CuentaConCalendario};
 use crate::recurrence::Window;
+use crate::store::{self, StoreReading};
 
 /// Un evento y de qué calendario salió.
 ///
@@ -104,6 +105,23 @@ pub async fn account_events<R: tauri::Runtime>(
     Ok(lectura)
 }
 
+/// Los eventos de **todas** las cuentas entre dos momentos, del almacén del
+/// sistema: ya sincronizados y con las series expandidas, sin esperar a la
+/// red. Con `available: false` la ventana lee como antes, cuenta por cuenta.
+#[tauri::command]
+pub async fn store_events(from: String, to: String) -> Result<StoreReading, String> {
+    // Se valida igual que el camino de cada cuenta: un rango dado vuelta se ve
+    // igual que un mes vacío.
+    rango(&from, &to)?;
+    store::read_events(&from, &to).await
+}
+
+/// El botón «Actualizar»: pide al sincronizador que traiga ya lo nuevo.
+#[tauri::command]
+pub async fn request_sync(account_ids: Vec<String>) {
+    store::request_sync(&account_ids).await
+}
+
 /// Lee el rango que mandó la ventana.
 ///
 /// Se valida acá y no más adentro porque un rango dado vuelta —el fin antes que
@@ -149,6 +167,27 @@ mod tests {
 
         // Y uno de largo cero tampoco sirve: no puede haber nada adentro.
         assert!(rango("2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z").is_err());
+    }
+
+    /// Al almacén tampoco le llega un rango dado vuelta o que no es fecha: el
+    /// comando lo rechaza antes de tocar el bus, con el mismo motivo que el
+    /// camino de cada cuenta. Si llegara, el error sería el del bus (o un mes
+    /// vacío), y la persona no sabría que el problema es el rango.
+    #[test]
+    fn el_almacen_rechaza_el_rango_antes_de_llamar_al_bus() {
+        let dado_vuelta = tauri::async_runtime::block_on(store_events(
+            "2026-10-01T00:00:00Z".into(),
+            "2026-09-01T00:00:00Z".into(),
+        ))
+        .unwrap_err();
+        assert!(dado_vuelta.contains("termina antes"), "{dado_vuelta}");
+
+        let basura = tauri::async_runtime::block_on(store_events(
+            "mañana".into(),
+            "2026-09-01T00:00:00Z".into(),
+        ))
+        .unwrap_err();
+        assert!(basura.contains("no es una fecha válida"), "{basura}");
     }
 
     #[test]
