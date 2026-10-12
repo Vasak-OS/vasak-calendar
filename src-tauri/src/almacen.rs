@@ -235,7 +235,7 @@ pub async fn pedir_sincronizacion(account_ids: &[String]) {
             )
             .await
         {
-            eprintln!("[calendario] no se pudo pedir una vuelta de «{id}»: {e}");
+            eprintln!("[calendario] no se pudo pedir una vuelta de una cuenta: {e}");
         }
     }
 }
