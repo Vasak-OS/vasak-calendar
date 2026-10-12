@@ -34,6 +34,9 @@ const PAGINA: u32 = 1000;
 /// se avisa.
 const MAX_PAGINAS: usize = 10;
 
+/// El aviso de que alguna serie no se pudo expandir del todo en el rango.
+const RECORTADO: &str = "hay eventos que no se pudieron expandir del todo";
+
 /// Un calendario como lo lista el almacén.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CalendarioGuardado {
@@ -184,10 +187,11 @@ where
         let json = pagina(cursor.clone()).await?;
         let pagina: PaginaDeOcurrencias = serde_json::from_str(&json)
             .map_err(|e| format!("no se pudieron leer los eventos: {e}"))?;
-        if pagina.truncated {
-            lectura
-                .fallos
-                .push("hay eventos que no se pudieron expandir del todo".into());
+        // Una vez, aunque lo digan varias páginas: el almacén lo vuelve a
+        // calcular en cada una, y el mismo aviso diez veces arriba del mes no
+        // dice nada más que una.
+        if pagina.truncated && !lectura.fallos.iter().any(|f| f == RECORTADO) {
+            lectura.fallos.push(RECORTADO.into());
         }
         lectura
             .eventos
@@ -555,6 +559,30 @@ mod tests {
 
     /// Lo que el almacén no pudo expandir se dice: si no, las semanas que
     /// faltan parecen libres.
+    /// El almacén vuelve a decir `truncated` en cada página; el aviso tiene
+    /// que salir una sola vez arriba del mes.
+    #[test]
+    fn el_aviso_de_recorte_sale_una_sola_vez_aunque_lo_digan_varias_paginas() {
+        let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
+        let (lectura, _) = leer_con(
+            &calendarios,
+            vec![
+                Ok(pagina_json(
+                    vec![ocurrencia_vieja("google/1")],
+                    Some("b"),
+                    true,
+                )),
+                Ok(pagina_json(
+                    vec![ocurrencia_vieja("google/1")],
+                    Some("c"),
+                    true,
+                )),
+                Ok(pagina_json(vec![ocurrencia_vieja("google/1")], None, true)),
+            ],
+        );
+        assert_eq!(lectura.unwrap().lectura.fallos, vec![RECORTADO.to_string()]);
+    }
+
     #[test]
     fn una_pagina_cortada_se_avisa() {
         let calendarios = serde_json::json!([calendario_json("google/1", "Personal", &[])]);
