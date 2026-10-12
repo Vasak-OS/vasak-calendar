@@ -55,6 +55,15 @@ interface LecturaDeCuenta {
 	fallos: string[];
 }
 
+/** Lo que contesta el almacén del sistema: lo mismo, de todas las cuentas. */
+interface LecturaDelAlmacen extends LecturaDeCuenta {
+	/** Si el almacén tiene calendarios. Si no, se lee cuenta por cuenta. */
+	disponible: boolean;
+}
+
+/** El aviso del programa de que cambió lo guardado del calendario. */
+const EVENTO_DEL_ALMACEN = 'calendario-cambio';
+
 /**
  * El mes que se está mirando y lo que hay en él.
  *
@@ -154,13 +163,33 @@ export function useCalendario() {
 			if (mio !== vigente) {
 				return;
 			}
-			cuentas.value = conectadas;
+			// Una respuesta que no es lista se toma como ninguna cuenta: la
+			// ventana se dibuja con `cuentas` mientras se lee el almacén, y no
+			// puede quedar sin valor en el medio.
+			cuentas.value = Array.isArray(conectadas) ? conectadas : [];
 
 			const { desde, hasta } = rangoDe(dias.value, zona.value);
+
+			// **Primero lo que ya está sincronizado en el sistema**: aparece sin
+			// esperar a la red, de todas las cuentas a la vez y con las series ya
+			// expandidas. Sólo si el almacén todavía no tiene calendarios —el
+			// área no se encendió, la primera vuelta no terminó— se va al
+			// servidor cuenta por cuenta, como antes.
+			const delAlmacen = await leerDelAlmacen(desde, hasta);
+			if (mio !== vigente) {
+				return;
+			}
+			if (delAlmacen?.disponible) {
+				calendarios.value = delAlmacen.calendarios;
+				eventos.value = delAlmacen.eventos;
+				nuevosAvisos.push(...delAlmacen.fallos);
+				return;
+			}
+
 			const nuevosEventos: CalendarEvent[] = [];
 			const nuevosCalendarios: Calendario[] = [];
 
-			for (const cuenta of conectadas) {
+			for (const cuenta of cuentas.value) {
 				if (cuenta.necesita_reconectarse) {
 					// No se intenta: el servicio ya sabe que la credencial no
 					// sirve, y pedirla sólo agrega un error técnico encima de un
@@ -205,6 +234,34 @@ export function useCalendario() {
 				cargando.value = false;
 			}
 		}
+	}
+
+	/**
+	 * Lee el rango del almacén. `null` si no se pudo —sin el servicio, sin
+	 * permiso—: quien llama lee como antes, y no se avisa nada, porque el
+	 * camino de siempre dice lo suyo si también falla.
+	 */
+	async function leerDelAlmacen(desde: string, hasta: string): Promise<LecturaDelAlmacen | null> {
+		try {
+			return await invoke<LecturaDelAlmacen>('store_events', { from: desde, to: hasta });
+		} catch (e) {
+			console.error('no se pudo leer el almacén del calendario', e);
+			return null;
+		}
+	}
+
+	/**
+	 * El botón «Actualizar»: le pide al sincronizador que traiga ya lo nuevo de
+	 * cada cuenta, y relee lo que hay mientras tanto. Lo que llegue después se
+	 * avisa con [`EVENTO_DEL_ALMACEN`].
+	 */
+	async function actualizar() {
+		try {
+			await invoke('request_sync', { accountIds: cuentas.value.map((c) => c.id) });
+		} catch (e) {
+			console.error('no se pudo pedir una vuelta al sincronizador', e);
+		}
+		await cargar();
 	}
 
 	async function irA(nuevo: Date) {
@@ -260,6 +317,24 @@ export function useCalendario() {
 			console.error('no se pudo escuchar el cambio de zona horaria', e);
 		});
 
+	// Lo nuevo que trae el sincronizador en segundo plano: se relee el mes a
+	// la vista. Sin preguntar a intervalos.
+	let dejarDeEscucharAlAlmacen: UnlistenFn | null = null;
+	listen(EVENTO_DEL_ALMACEN, () => {
+		void cargar();
+	})
+		.then((cancelar) => {
+			if (descartado) {
+				cancelar();
+				return;
+			}
+			dejarDeEscucharAlAlmacen = cancelar;
+		})
+		.catch((e) => {
+			// Sin el aviso queda el botón de actualizar: se pierde enterarse solo.
+			console.error('no se pudo escuchar al almacén del calendario', e);
+		});
+
 	const latido = setInterval(() => {
 		const ahora = new Date();
 		// Sólo si cambió el día, y **el día de la zona que se está mirando**:
@@ -286,6 +361,7 @@ export function useCalendario() {
 		clearInterval(latido);
 		window.removeEventListener('focus', alVolver);
 		dejarDeEscuchar?.();
+		dejarDeEscucharAlAlmacen?.();
 	});
 
 	return {
@@ -303,6 +379,7 @@ export function useCalendario() {
 		avisos,
 		eventsOf,
 		cargar,
+		actualizar,
 		mesAnterior,
 		mesSiguiente,
 		irAHoy,

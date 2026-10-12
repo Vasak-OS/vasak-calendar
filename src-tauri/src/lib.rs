@@ -3,6 +3,7 @@
 //! Lo que hay acá no es decoración: cada pieza resuelve algo que en las
 //! aplicaciones reales del escritorio se rompió al menos una vez.
 
+mod almacen;
 mod caldav;
 mod comandos;
 mod cuentas;
@@ -39,6 +40,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             comandos::listar_cuentas,
             comandos::account_events,
+            comandos::store_events,
+            comandos::request_sync,
             reloj::zona_del_sistema,
         ])
         // El aviso de que la máquina cambió de huso. Va acá y no en la ventana
@@ -46,6 +49,7 @@ pub fn run() {
         // arrancar: ver la cabecera de `reloj.rs`.
         .setup(|app| {
             reloj::escuchar(app.handle().clone());
+            almacen::escuchar(app.handle().clone());
             // La ventana nace oculta y la muestra el frontend cuando ya tiene los
             // textos y el tema. Esto la muestra igual si el frontend nunca llega:
             // ver `ventana.rs`.
