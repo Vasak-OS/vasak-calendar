@@ -169,6 +169,27 @@ mod tests {
         assert!(rango("2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z").is_err());
     }
 
+    /// Al almacén tampoco le llega un rango dado vuelta o que no es fecha: el
+    /// comando lo rechaza antes de tocar el bus, con el mismo motivo que el
+    /// camino de cada cuenta. Si llegara, el error sería el del bus (o un mes
+    /// vacío), y la persona no sabría que el problema es el rango.
+    #[test]
+    fn el_almacen_rechaza_el_rango_antes_de_llamar_al_bus() {
+        let dado_vuelta = tauri::async_runtime::block_on(store_events(
+            "2026-10-01T00:00:00Z".into(),
+            "2026-09-01T00:00:00Z".into(),
+        ))
+        .unwrap_err();
+        assert!(dado_vuelta.contains("termina antes"), "{dado_vuelta}");
+
+        let basura = tauri::async_runtime::block_on(store_events(
+            "mañana".into(),
+            "2026-09-01T00:00:00Z".into(),
+        ))
+        .unwrap_err();
+        assert!(basura.contains("no es una fecha válida"), "{basura}");
+    }
+
     #[test]
     fn una_fecha_que_no_es_fecha_se_rechaza() {
         for basura in ["", "mañana", "2026-09-01", "01/09/2026"] {
