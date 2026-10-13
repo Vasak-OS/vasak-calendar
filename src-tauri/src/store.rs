@@ -16,6 +16,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use vasak_accounts_store_client::trusted_sync_owner;
+
 use crate::caldav::{Calendario, Event};
 use crate::comandos::{EventInCalendar, LecturaDeCuenta};
 
@@ -105,13 +107,33 @@ async fn connect() -> Result<zbus::Connection, String> {
         .map_err(|e| format!("no se pudo contactar al almacén del sistema: {e}"))
 }
 
+/// Conecta al bus y comprueba, **una vez por conexión**, que quien tiene el
+/// nombre del almacén sea de verdad el servicio instalado —no un proceso de la
+/// sesión que tomó el nombre mientras el servicio no estaba—. Devuelve el nombre
+/// único ya verificado: las llamadas van dirigidas a él, así un cambio de dueño
+/// posterior no las redirige a un impostor. Si no se puede confiar, falla cerrado
+/// y la lectura cae al camino de error de siempre. Ver `vasak-accounts#77`.
+async fn connect_verified() -> Result<(zbus::Connection, String), String> {
+    let conexion = connect().await?;
+    let dueno = trusted_sync_owner(&conexion)
+        .await
+        .map_err(|e| format!("no se pudo confiar en el almacén del sistema: {e}"))?;
+    Ok((conexion, dueno))
+}
+
 async fn call<A>(metodo: &str, argumentos: &A) -> Result<String, String>
 where
     A: serde::ser::Serialize + zbus::zvariant::DynamicType,
 {
-    connect()
-        .await?
-        .call_method(Some(SERVICE), PATH, Some(INTERFACE), metodo, argumentos)
+    let (conexion, dueno) = connect_verified().await?;
+    conexion
+        .call_method(
+            Some(dueno.as_str()),
+            PATH,
+            Some(INTERFACE),
+            metodo,
+            argumentos,
+        )
         .await
         .map_err(|e| format!("{metodo}: {e}"))?
         .body()
@@ -265,8 +287,8 @@ fn error_name(error: &zbus::Error) -> Option<String> {
 /// y el estado con [`STATUS_EVENT`]. Devuelve las cuentas a las que no se les
 /// pudo pedir; un fallo de una no frena a las demás.
 pub async fn request_sync(account_ids: &[String]) -> Vec<SyncRequestFailure> {
-    let conexion = match connect().await {
-        Ok(conexion) => conexion,
+    let (conexion, dueno) = match connect_verified().await {
+        Ok(verificada) => verificada,
         Err(e) => {
             eprintln!("[calendario] no se pudo pedir una vuelta: {e}");
             return account_ids
@@ -282,7 +304,7 @@ pub async fn request_sync(account_ids: &[String]) -> Vec<SyncRequestFailure> {
     for id in account_ids {
         if let Err(e) = conexion
             .call_method(
-                Some(SERVICE),
+                Some(dueno.as_str()),
                 PATH,
                 Some(INTERFACE),
                 "RequestSync",

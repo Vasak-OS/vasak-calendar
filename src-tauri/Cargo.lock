@@ -4555,8 +4555,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vasak-accounts-store-client"
+version = "0.20.0"
+source = "git+https://github.com/Vasak-OS/vasak-accounts?branch=feat%2Fstore-owner-verification#e1b53cef216863b80aacd0bf1e13e1d61a995428"
+dependencies = [
+ "zbus",
+]
+
+[[package]]
 name = "vasak-calendar"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -4578,6 +4586,7 @@ dependencies = [
  "tauri-plugin-vsk-contextual-menu",
  "tauri-plugin-vsk-journal",
  "tokio",
+ "vasak-accounts-store-client",
  "zbus",
 ]
 
