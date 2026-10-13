@@ -473,6 +473,21 @@ async fn follow(app: &tauri::AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    const BUS_ADDRESS_VAR: &str = "DBUS_SESSION_BUS_ADDRESS";
+
+    /// Varias pruebas tocan `DBUS_SESSION_BUS_ADDRESS` para apuntar `connect()` a
+    /// un bus de mentira o de prueba. Como las pruebas corren en paralelo en el
+    /// mismo proceso y la variable es del proceso entero, se serializan con este
+    /// candado: sin él, una pisaría la dirección de la otra. Se recupera de un
+    /// envenenamiento porque lo único que protege es una variable de entorno.
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     /// Un calendario tal como lo serializa `CalendarItem` en
     /// `vasak-accounts/sync/src/store/calendar_read.rs`.
@@ -1063,15 +1078,10 @@ mod tests {
     /// vuelve como sin servicio, y la ventana lo dice al lado de cada una.
     #[test]
     fn sin_bus_cada_cuenta_pedida_queda_sin_servicio() {
-        const VARIABLE: &str = "DBUS_SESSION_BUS_ADDRESS";
-        let antes = std::env::var_os(VARIABLE);
-        std::env::set_var(VARIABLE, "unix:path=/nonexistent/vasak-qa/bus");
+        let _guard = env_lock();
+        let _address = BusAddressGuard::point_to("unix:path=/nonexistent/vasak-qa/bus");
         let ids = vec!["google".to_string(), "nube".to_string()];
         let fallos = tauri::async_runtime::block_on(request_sync(&ids));
-        match antes {
-            Some(valor) => std::env::set_var(VARIABLE, valor),
-            None => std::env::remove_var(VARIABLE),
-        }
         assert_eq!(
             fallos,
             vec![
@@ -1144,5 +1154,207 @@ mod tests {
     fn los_avisos_a_la_ventana_tienen_los_nombres_que_escucha() {
         assert_eq!(CHANGED_EVENT, EXPECTED_CHANGED_EVENT);
         assert_eq!(STATUS_EVENT, EXPECTED_STATUS_EVENT);
+    }
+
+    // ── El dueño del almacén se comprueba antes de confiar ───────────────────
+    //
+    // El almacén vive en el bus de **sesión**, donde cualquier proceso del
+    // usuario puede tomar el nombre `ar.net.vasak.os.AccountsSync` mientras el
+    // servicio no está y hacerse pasar por él. Estas pruebas levantan un
+    // `dbus-daemon` de verdad, hacen que el propio proceso de prueba —cuyo
+    // `/proc/<pid>/exe` es el runner de cargo, no `/usr/bin/vasak-accounts-sync`—
+    // tome el nombre, y comprueban que la lectura **falla cerrado** en vez de
+    // confiar en el impostor. Sin el cableado de `connect_verified`, `call`
+    // llamaría al impostor y el error no sería el de «no se pudo confiar», así
+    // que estas pruebas fallan sin el cambio. Espejan el patrón de las de bus
+    // real del crate (`vasak-accounts`, store-client/tests/real_bus.rs, #83).
+    //
+    // Si no hay `dbus-daemon` en el equipo, se avisan y no corren: el CI instala
+    // el paquete `dbus` para que sí lo hagan.
+
+    use std::io::{BufRead, BufReader};
+    use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
+
+    /// Un `dbus-daemon` de sesión sólo para la prueba. Se mata al salir del
+    /// alcance y se lleva su archivo de configuración.
+    struct TestBus {
+        child: Child,
+        address: String,
+        config: PathBuf,
+    }
+
+    impl TestBus {
+        /// Levanta el bus, o `None` si no hay `dbus-daemon` en el equipo.
+        fn launch() -> Option<Self> {
+            let config = std::env::temp_dir().join(format!(
+                "vasak-calendar-store-bus-{}-{}.conf",
+                std::process::id(),
+                fastish_id()
+            ));
+            std::fs::write(
+                &config,
+                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <policy context="default">
+    <allow own="*"/>
+    <allow send_destination="*"/>
+    <allow receive_sender="*"/>
+  </policy>
+</busconfig>
+"#,
+            )
+            .ok()?;
+
+            let mut child = Command::new("dbus-daemon")
+                .arg(format!("--config-file={}", config.display()))
+                .arg("--print-address")
+                .arg("--nofork")
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|_| {
+                    let _ = std::fs::remove_file(&config);
+                })
+                .ok()?;
+
+            let stdout = child.stdout.take()?;
+            let mut address = String::new();
+            if BufReader::new(stdout).read_line(&mut address).is_err() || address.trim().is_empty()
+            {
+                let _ = child.kill();
+                let _ = std::fs::remove_file(&config);
+                return None;
+            }
+
+            Some(TestBus {
+                child,
+                address: address.trim().to_owned(),
+                config,
+            })
+        }
+
+        fn address(&self) -> &str {
+            &self.address
+        }
+    }
+
+    impl Drop for TestBus {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_file(&self.config);
+        }
+    }
+
+    /// Un identificador barato y único por proceso, para el nombre del archivo
+    /// de configuración del bus.
+    fn fastish_id() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Restaura `DBUS_SESSION_BUS_ADDRESS` a lo que tenía al salir del alcance,
+    /// pase lo que pase en la prueba.
+    struct BusAddressGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl BusAddressGuard {
+        /// Apunta `connect()` al bus de prueba y recuerda el valor anterior.
+        fn point_to(address: &str) -> Self {
+            let previous = std::env::var_os(BUS_ADDRESS_VAR);
+            std::env::set_var(BUS_ADDRESS_VAR, address);
+            Self { previous }
+        }
+    }
+
+    impl Drop for BusAddressGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(valor) => std::env::set_var(BUS_ADDRESS_VAR, valor),
+                None => std::env::remove_var(BUS_ADDRESS_VAR),
+            }
+        }
+    }
+
+    /// Un impostor que toma el nombre del sincronizador en el bus de prueba
+    /// —el propio proceso de prueba— hace que la lectura **falle cerrado**: ni
+    /// `connect_verified` ni `call` confían en él, y el error es el de «no se
+    /// pudo confiar», no el de un método desconocido. Sin el cambio, `call`
+    /// llamaría al impostor y el error sería otro: esta prueba falla sin él.
+    // `env_lock` es un `std::sync::Mutex` —lo comparte con la prueba síncrona
+    // `sin_bus_…`, que corre con `block_on`— y acá se sostiene a través de los
+    // `.await` del bus a propósito: serializa la variable de entorno del proceso
+    // durante toda la prueba. No protege ningún dato compartido entre tareas, así
+    // que sostenerlo cruzando un `.await` no arriesga nada.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn un_impostor_en_el_bus_hace_fallar_cerrada_la_lectura() {
+        let _guard = env_lock();
+        let Some(bus) = TestBus::launch() else {
+            eprintln!("sin dbus-daemon: se omite la prueba de bus real");
+            return;
+        };
+        let _address = BusAddressGuard::point_to(bus.address());
+
+        // El proceso de prueba toma el nombre del servicio: es el impostor. Su
+        // `exe` es el runner de cargo, no `/usr/bin/vasak-accounts-sync`. La
+        // conexión se mantiene viva mientras dure la comprobación.
+        let impostor = connect().await.expect("conectar el impostor al bus");
+        impostor
+            .request_name(SERVICE)
+            .await
+            .expect("el impostor toma el nombre en el bus de prueba");
+
+        let verificada = connect_verified().await;
+        let error = verificada.expect_err("el impostor no tiene que ser de confianza");
+        assert!(error.contains("confiar"), "{error}");
+
+        // Y la lectura de verdad, por el mismo camino, también falla cerrado: no
+        // es un error de método del impostor, es el de que no se pudo confiar.
+        let lectura = call("GetStatus", &()).await;
+        let error = lectura.expect_err("no se lee del impostor");
+        assert!(error.contains("confiar"), "{error}");
+    }
+
+    /// Un nombre sin dueño —el servicio no está— también hace fallar cerrado:
+    /// no hay en quién confiar.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn sin_dueno_del_nombre_la_lectura_falla_cerrada() {
+        let _guard = env_lock();
+        let Some(bus) = TestBus::launch() else {
+            eprintln!("sin dbus-daemon: se omite la prueba de bus real");
+            return;
+        };
+        let _address = BusAddressGuard::point_to(bus.address());
+
+        // Nadie toma el nombre en este bus: no hay dueño que verificar.
+        let verificada = connect_verified().await;
+        assert!(verificada
+            .expect_err("sin dueño no hay en quién confiar")
+            .contains("confiar"));
+
+        // Y una lectura de verdad por el mismo camino tampoco confía en nadie.
+        let lectura = call("GetStatus", &()).await;
+        assert!(lectura
+            .expect_err("sin dueño no se lee")
+            .contains("confiar"));
+
+        // `request_sync` también cae cerrado: cada cuenta pedida vuelve como sin
+        // servicio, porque `connect_verified` no pudo dar un dueño de confianza.
+        let fallos = request_sync(&["google".to_string()]).await;
+        assert_eq!(
+            fallos,
+            vec![SyncRequestFailure {
+                account_id: "google".into(),
+                reason: "unavailable",
+            }]
+        );
     }
 }
