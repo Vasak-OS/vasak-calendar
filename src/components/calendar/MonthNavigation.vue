@@ -10,7 +10,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ActionButton } from '@vasakgroup/vue-libvasak';
 
-withDefaults(
+const props = withDefaults(
 	defineProps<{
 		/** «septiembre de 2026», ya escrito en el idioma de la sesión. */
 		title: string;
@@ -20,8 +20,15 @@ withDefaults(
 		 * lo que quede y no hay otra cosa que se pueda mover.
 		 */
 		fluid?: boolean;
+		/**
+		 * Qué dicen las flechas para quien no las ve. Por omisión hablan de meses,
+		 * porque de ahí vienen; las otras vistas —día, semana, año— pasan las
+		 * suyas, que es lo que cambia según lo que mueva cada flecha.
+		 */
+		previousLabel?: string;
+		nextLabel?: string;
 	}>(),
-	{ fluid: false }
+	{ fluid: false, previousLabel: undefined, nextLabel: undefined }
 );
 
 const emit = defineEmits<{
@@ -30,6 +37,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const previousText = () => props.previousLabel ?? t('calendario.mesAnterior');
+const nextText = () => props.nextLabel ?? t('calendario.mesSiguiente');
 </script>
 
 <template>
@@ -41,7 +51,7 @@ const { t } = useI18n();
       variant="ghost"
       label=""
       icon="go-previous"
-      :icon-alt="t('calendario.mesAnterior')"
+      :icon-alt="previousText()"
       @click="emit('previous')" />
     <!-- `aria-live` para que al cambiar de mes se anuncie: el título es lo
          único que dice dónde quedó la cuadrícula, y quien no la ve no tiene
@@ -64,7 +74,7 @@ const { t } = useI18n();
       variant="ghost"
       label=""
       icon="go-next"
-      :icon-alt="t('calendario.mesSiguiente')"
+      :icon-alt="nextText()"
       @click="emit('next')" />
   </div>
 </template>

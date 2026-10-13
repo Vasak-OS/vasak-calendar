@@ -65,6 +65,7 @@ const DATA_COLOR = [
 	'components/calendar/AccountsPanel.vue',
 	'components/calendar/MonthGrid.vue',
 	'components/calendar/MonthAgenda.vue',
+	'components/calendar/DayEvents.vue',
 ];
 
 /** Un color puesto por `style` en una plantilla, o la propiedad `color` de un componente. */

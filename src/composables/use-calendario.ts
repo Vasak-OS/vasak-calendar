@@ -1,19 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { computed, onScopeDispose, ref, watch } from 'vue';
-import {
-	type CalendarEvent,
-	cuadricula,
-	eventsByDay,
-	primeroDelMes,
-	rangoDe,
-	sumarMeses,
-} from '@/tools/mes';
+import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
 import type { AccountSyncStatus, SyncRequestFailure } from '@/tools/sync-status';
+import {
+	type CalendarView,
+	DEFAULT_VIEW,
+	isCalendarView,
+	stepAnchor,
+	viewDays,
+} from '@/tools/views';
 import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
 
 /** Dónde se recuerda en qué zona se quiere ver la agenda. */
 const CLAVE_DE_ZONA = 'vasak-calendar.zona';
+
+/** Dónde se recuerda con qué vista se mira el calendario. */
+const VIEW_KEY = 'vasak-calendar.view';
 
 /** El aviso del programa de que la máquina cambió de huso. Ver `reloj.rs`. */
 const EVENTO_DE_ZONA = 'zona-cambio';
@@ -127,8 +130,31 @@ export function useCalendario() {
 	/** Ahora, revisado cada tanto para que «hoy» no se quede en ayer. */
 	const hoy = ref(new Date());
 
-	/** Siempre el día 1: es la referencia del mes, no un día elegido. */
-	const mes = ref(primeroDelMes(new Date(), zona.value));
+	/**
+	 * Qué vista se está mirando: día, N días, semana, mes, año o agenda.
+	 *
+	 * Es una preferencia de esta ventana y se recuerda, como la zona. Lo
+	 * guardado puede estar viejo —se renombró una vista, es de otra versión—, y
+	 * entonces se cae a la de siempre en vez de quedar sin dibujar nada.
+	 */
+	const view = ref<CalendarView>(savedView());
+
+	/**
+	 * El día que la vista tiene como foco.
+	 *
+	 * Es **lo único** que mueven las flechas, y de él sale todo: el mes (su día
+	 * 1), la semana (su lunes), el año (su año). Arranca en hoy, así que el mes
+	 * se abre en el mes de hoy como siempre y el día, en el día de hoy.
+	 */
+	const anchor = ref<Date>(new Date());
+
+	/**
+	 * El primero del mes de `anchor`, para el título y para quien lo necesite.
+	 *
+	 * Se deriva de `anchor` y no se guarda aparte: así no hay dos referencias que
+	 * se puedan contradecir —la del mes y la del día— cuando se cambia de vista.
+	 */
+	const mes = computed(() => primeroDelMes(anchor.value, zona.value));
 	const cuentas = ref<Cuenta[]>([]);
 	const calendarios = ref<Calendario[]>([]);
 	const eventos = ref<CalendarEvent[]>([]);
@@ -146,7 +172,8 @@ export function useCalendario() {
 	 */
 	let vigente = 0;
 
-	const dias = computed(() => cuadricula(mes.value, zona.value, hoy.value));
+	/** Los días que la vista muestra y que acotan lo que se le pide al almacén. */
+	const dias = computed(() => viewDays(view.value, anchor.value, zona.value, hoy.value));
 	const eventosPorDia = computed(() => eventsByDay(eventos.value, dias.value, zona.value));
 
 	/** Los eventos de un día de la cuadrícula. */
@@ -294,14 +321,41 @@ export function useCalendario() {
 		await Promise.all([loadSyncStatus(), cargar()]);
 	}
 
+	/** Lleva el foco a un día y vuelve a leer el rango nuevo. */
 	async function irA(nuevo: Date) {
-		mes.value = primeroDelMes(nuevo, zona.value);
+		anchor.value = nuevo;
 		await cargar();
 	}
 
-	const mesAnterior = () => irA(sumarMeses(mes.value, -1, zona.value));
-	const mesSiguiente = () => irA(sumarMeses(mes.value, 1, zona.value));
-	const irAHoy = () => irA(new Date());
+	/** La flecha de ir atrás, según la vista: un día, una semana, un mes, un año. */
+	const goPrevious = () => irA(stepAnchor(view.value, anchor.value, zona.value, -1));
+	/** La flecha de ir adelante, según la vista. */
+	const goNext = () => irA(stepAnchor(view.value, anchor.value, zona.value, 1));
+	/** «Hoy»: lleva el foco al día de hoy, sin cambiar de vista. */
+	const goToToday = () => irA(new Date());
+
+	/**
+	 * Cambia de vista. Guarda la elección y relee, porque cada vista pide un
+	 * rango distinto —un día, una semana, un año— y lo que hay en memoria es el
+	 * del rango anterior.
+	 */
+	async function setView(next: CalendarView) {
+		view.value = next;
+		guardarView(next);
+		await cargar();
+	}
+
+	/**
+	 * Abre un día —o un mes— concreto en la vista que se pida: es lo que usan la
+	 * vista de año (tocar un día va al día; tocar el mes va al mes) y cualquier
+	 * salto parecido.
+	 */
+	async function show(fecha: Date, kind: CalendarView) {
+		anchor.value = fecha;
+		view.value = kind;
+		guardarView(kind);
+		await cargar();
+	}
 
 	/** Cambia en qué zona se mira la agenda. Vacío vuelve a la del sistema. */
 	function elegirZona(nueva: string) {
@@ -309,16 +363,14 @@ export function useCalendario() {
 		guardarZona(zonaElegida.value);
 	}
 
-	// Cambiar de zona cambia qué días entran en la cuadrícula, así que hay que
-	// volver a pedirle al servidor el rango nuevo: con otra zona, la primera y la
-	// última celda son otras y sus eventos no están en memoria.
+	// Cambiar de zona cambia qué días entran en la vista, así que hay que volver
+	// a pedirle al servidor el rango nuevo: con otra zona, la primera y la última
+	// celda son otras y sus eventos no están en memoria.
 	//
-	// El mes se recalcula contra la zona nueva **antes** de pedir. Sin eso, el
-	// día 1 guardado es el instante del día 1 de la zona vieja, que en la nueva
-	// puede ser el último día del mes anterior — y la cuadrícula se corre un mes
-	// entero al cambiar de zona.
+	// Ya no hace falta recalcular nada a mano: el mes se deriva de `anchor` con
+	// la zona vigente (`primeroDelMes`), así que no puede quedar corrido un mes
+	// al cambiar de huso como pasaba con el día 1 guardado aparte.
 	watch(zona, async () => {
-		mes.value = primeroDelMes(mes.value, zona.value);
 		await cargar();
 	});
 
@@ -416,6 +468,10 @@ export function useCalendario() {
 
 	return {
 		mes,
+		view,
+		anchor,
+		setView,
+		show,
 		zona,
 		zonaElegida,
 		zonaDelSistema,
@@ -432,10 +488,36 @@ export function useCalendario() {
 		refresh,
 		syncStatuses,
 		refreshFailures,
-		mesAnterior,
-		mesSiguiente,
-		irAHoy,
+		goPrevious,
+		goNext,
+		goToToday,
 	};
+}
+
+/**
+ * Qué vista quedó elegida la última vez.
+ *
+ * En `localStorage`, como la zona: es una preferencia de esta ventana, no un
+ * dato de la persona. Todo el acceso va con `try`, porque en una ventana
+ * privada —o con el almacenamiento bloqueado— hasta *leerlo* lanza, y una
+ * preferencia que no se puede recordar no puede impedir abrir el calendario.
+ * Una vista guardada que ya no existe se descarta y se cae a la de siempre.
+ */
+function savedView(): CalendarView {
+	try {
+		const guardada = window.localStorage.getItem(VIEW_KEY);
+		return isCalendarView(guardada) ? guardada : DEFAULT_VIEW;
+	} catch {
+		return DEFAULT_VIEW;
+	}
+}
+
+function guardarView(view: CalendarView) {
+	try {
+		window.localStorage.setItem(VIEW_KEY, view);
+	} catch {
+		// Se pierde al cerrar, y nada más. No vale la pena molestar con esto.
+	}
 }
 
 /**
