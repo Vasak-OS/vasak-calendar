@@ -2,11 +2,11 @@
  * Cómo va la sincronización de cada cuenta, en el panel de cuentas
  * (Vasak-OS/vasak-calendar#63).
  *
- * El estado sale de `sync_status` (el `GetStatus` del almacén) y se relee con el
- * aviso `calendar-sync-status`; «Actualizar» guarda a qué cuentas no se les
+ * El estado sale de `syncStatus('calendar')` de `@vasakgroup/plugin-vsk-store`
+ * (el `GetStatus` del almacén) y se relee con su aviso `STATUS_EVENT`; «Actualizar» guarda a qué cuentas no se les
  * pudo pedir una vuelta. `invoke` y `listen` son los dobles de
- * `tests/dobles.ts`: el bus y el almacén se prueban en Rust
- * (`src-tauri/src/store.rs`).
+ * `tests/dobles.ts`, por debajo del paquete del plugin: el bus, la
+ * comprobación del dueño y `syncLine` se prueban en el plugin.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -15,11 +15,17 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { type EffectScope, effectScope } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import { useCalendario } from '@/composables/use-calendario';
-import type { AccountSyncStatus, SyncRequestFailure } from '@/tools/sync-status';
+import {
+	type AccountSyncStatus,
+	STATUS_EVENT,
+	type SyncRequestFailure,
+} from '@vasakgroup/plugin-vsk-store';
 import CalendarView from '@/views/CalendarView.vue';
 import { emit, invocations, olvidarTodo, setAnswer, setFailure, timesInvoked } from './dobles';
 
-const STATUS_EVENT = 'calendar-sync-status';
+/** Los comandos del plugin del almacén, tal como los manda su paquete. */
+const SYNC_STATUS = 'plugin:vsk-store|sync_status';
+const REQUEST_SYNC = 'plugin:vsk-store|request_sync';
 
 const ACCOUNTS = [
 	{ id: 'google', nombre: 'ana@gmail.com', necesita_reconectarse: false },
@@ -75,16 +81,27 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
 
 describe('el estado de la sincronización', () => {
 	test('al abrir se lee el estado de cada cuenta del almacén', async () => {
-		setAnswer('sync_status', STATUSES);
+		setAnswer(SYNC_STATUS, STATUSES);
 		const calendar = open();
 		await flush();
 
-		expect(timesInvoked('sync_status')).toBe(1);
+		expect(timesInvoked(SYNC_STATUS)).toBe(1);
 		expect(calendar.syncStatuses.value).toEqual(STATUSES);
 	});
 
+	// El plugin sólo contesta las áreas que registró la aplicación: pedir otra,
+	// o ninguna, deja el panel sin estado y sin decir por qué.
+	test('el estado se pide sólo del área del calendario', async () => {
+		setAnswer(SYNC_STATUS, STATUSES);
+		open();
+		await flush();
+
+		const pedido = invocations.find((i) => i.command === SYNC_STATUS);
+		expect(pedido?.args).toEqual({ area: 'calendar' });
+	});
+
 	test('una respuesta que no es una lista es ningún estado', async () => {
-		setAnswer('sync_status', { error: 'no' });
+		setAnswer(SYNC_STATUS, { error: 'no' });
 		const calendar = open();
 		await flush();
 
@@ -92,28 +109,28 @@ describe('el estado de la sincronización', () => {
 	});
 
 	test('si no se puede leer el estado, se queda el que había', async () => {
-		setAnswer('sync_status', STATUSES);
+		setAnswer(SYNC_STATUS, STATUSES);
 		const calendar = open();
 		await flush();
-		setFailure('sync_status', 'GetStatus: el servicio no existe');
+		setFailure(SYNC_STATUS, 'GetStatus: el servicio no existe');
 
 		await quietly(async () => {
 			await emit(STATUS_EVENT);
 			await flush();
 		});
 
-		expect(timesInvoked('sync_status')).toBe(2);
+		expect(timesInvoked(SYNC_STATUS)).toBe(2);
 		expect(calendar.syncStatuses.value).toEqual(STATUSES);
 	});
 
 	test('el aviso de estado relee el estado, no el mes', async () => {
-		setAnswer('sync_status', STATUSES);
+		setAnswer(SYNC_STATUS, STATUSES);
 		const calendar = open();
 		await flush();
 		const synced: AccountSyncStatus[] = [
 			{ account_id: 'google', state: 'synced', detail: '', last_synced_at: null },
 		];
-		setAnswer('sync_status', synced);
+		setAnswer(SYNC_STATUS, synced);
 
 		await emit(STATUS_EVENT);
 		await flush();
@@ -131,7 +148,7 @@ describe('el estado de la sincronización', () => {
 		await emit(STATUS_EVENT);
 		await flush();
 
-		expect(timesInvoked('sync_status')).toBe(1);
+		expect(timesInvoked(SYNC_STATUS)).toBe(1);
 	});
 
 	test('cerrada antes de engancharse, tampoco queda escuchando el estado', async () => {
@@ -144,7 +161,7 @@ describe('el estado de la sincronización', () => {
 		await flush();
 
 		// Sólo la lectura del arranque.
-		expect(timesInvoked('sync_status')).toBe(1);
+		expect(timesInvoked(SYNC_STATUS)).toBe(1);
 	});
 });
 
@@ -153,7 +170,7 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', EMPTY_STORE);
 		const failures: SyncRequestFailure[] = [{ account_id: 'nube', reason: 'denied' }];
-		setAnswer('request_sync', failures);
+		setAnswer(REQUEST_SYNC, failures);
 		const calendar = open();
 		await calendar.cargar();
 
@@ -165,11 +182,11 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 	test('un «Actualizar» que sale bien borra los rechazos del anterior', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', EMPTY_STORE);
-		setAnswer('request_sync', [{ account_id: 'nube', reason: 'failed' }]);
+		setAnswer(REQUEST_SYNC, [{ account_id: 'nube', reason: 'failed' }]);
 		const calendar = open();
 		await calendar.cargar();
 		await calendar.refresh();
-		setAnswer('request_sync', []);
+		setAnswer(REQUEST_SYNC, []);
 
 		await calendar.refresh();
 
@@ -182,7 +199,7 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 			{ id: 'vencida', nombre: 'vieja', necesita_reconectarse: true },
 		]);
 		setAnswer('store_events', EMPTY_STORE);
-		setFailure('request_sync', 'el programa no contesta');
+		setFailure(REQUEST_SYNC, 'el programa no contesta');
 		const calendar = open();
 		await calendar.cargar();
 
@@ -206,7 +223,7 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 
 		await calendar.refresh();
 
-		const pedido = invocations.find((i) => i.command === 'request_sync');
+		const pedido = invocations.find((i) => i.command === REQUEST_SYNC);
 		expect(pedido?.args).toEqual({ accountIds: ['google'] });
 	});
 
@@ -215,7 +232,7 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 		setAnswer('store_events', EMPTY_STORE);
 		const calendar = open();
 		await flush();
-		setAnswer('sync_status', STATUSES);
+		setAnswer(SYNC_STATUS, STATUSES);
 
 		await calendar.refresh();
 
@@ -225,7 +242,7 @@ describe('lo que «Actualizar» no pudo pedir', () => {
 	test('el aviso de estado olvida «se acaba de pedir» y deja los demás rechazos', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', EMPTY_STORE);
-		setAnswer('request_sync', [
+		setAnswer(REQUEST_SYNC, [
 			{ account_id: 'google', reason: 'too_soon' },
 			{ account_id: 'nube', reason: 'denied' },
 		]);
@@ -311,7 +328,7 @@ describe('la ventana', () => {
 	test('muestra el estado del almacén debajo de cada cuenta', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', EMPTY_STORE);
-		setAnswer('sync_status', STATUSES);
+		setAnswer(SYNC_STATUS, STATUSES);
 		mounted = mount(CalendarView, { attachTo: document.body });
 		await flush();
 
@@ -325,7 +342,7 @@ describe('la ventana', () => {
 		mounted = mount(CalendarView, { attachTo: document.body });
 		await flush();
 		expect(mounted.find('[data-testid="sync-status"]').exists()).toBe(false);
-		setAnswer('request_sync', [{ account_id: 'nube', reason: 'too_soon' }]);
+		setAnswer(REQUEST_SYNC, [{ account_id: 'nube', reason: 'too_soon' }]);
 
 		const refresh = mounted
 			.findAllComponents(ActionButton)

@@ -11,6 +11,8 @@ mod locales;
 mod recurrence;
 mod reloj;
 mod store;
+#[cfg(test)]
+mod test_bus;
 mod ventana;
 mod zonas;
 

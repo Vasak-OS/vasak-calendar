@@ -55,6 +55,9 @@ rrule = { version = "0.14", default-features = false }
 # tiempo de ejecución y **paniquea** si no puede, así que un error de sintaxis no
 # se ve hasta que la aplicación no arranca.
 serde_yaml = "0.9"
+# `tauri::test::mock_app`: una aplicación sin ventana para llamar a los
+# comandos desde las pruebas.
+tauri = { version = "2", features = ["test"] }
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

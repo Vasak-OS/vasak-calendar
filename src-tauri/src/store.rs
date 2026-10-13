@@ -568,5 +568,129 @@ mod tests {
         assert!(pedidas.is_empty());
     }
 
-    // ── Qué avisos despiertan a la ventana ─────────────────────────────────
+    // ── Por el cliente comprobado del plugin ───────────────────────────────
+
+    use crate::test_bus::{self, Calls, PrivateBus};
+
+    /// El almacén de mentira en el bus privado: anota cada pedido con sus
+    /// argumentos y contesta las páginas por su cursor.
+    #[derive(Clone, Default)]
+    struct FakeStore {
+        calendars: String,
+        pages: Vec<String>,
+        calls: Calls,
+    }
+
+    #[zbus::interface(name = "ar.net.vasak.os.AccountsStore")]
+    impl FakeStore {
+        fn list_calendars(&self) -> String {
+            self.calls.push("ListCalendars".into());
+            self.calendars.clone()
+        }
+
+        fn list_occurrences(
+            &self,
+            from: String,
+            to: String,
+            calendar_ids: Vec<String>,
+            cursor: String,
+            limit: u32,
+        ) -> String {
+            self.calls.push(format!(
+                "ListOccurrences {from} {to} {calendar_ids:?} {cursor:?} {limit}"
+            ));
+            let index: usize = if cursor.is_empty() {
+                0
+            } else {
+                cursor.parse().unwrap()
+            };
+            self.pages[index].clone()
+        }
+    }
+
+    fn fake_store() -> FakeStore {
+        FakeStore {
+            calendars: serde_json::json!([calendar_json("google/1", "Personal", &["VEVENT"])])
+                .to_string(),
+            pages: vec![
+                page_json(
+                    vec![new_occurrence("google/1", false, false)],
+                    Some("1"),
+                    false,
+                ),
+                page_json(vec![new_occurrence("google/2", true, false)], None, false),
+            ],
+            ..Default::default()
+        }
+    }
+
+    const DESDE: &str = "2026-09-01T03:00:00Z";
+    const HASTA: &str = "2026-10-01T03:00:00Z";
+
+    /// El mes sale del sincronizador comprobado, con el rango que pidió la
+    /// ventana, todas las cuentas, cada página por su cursor y el tamaño de
+    /// página que acepta el almacén.
+    #[tokio::test]
+    async fn el_mes_se_lee_del_almacen_por_el_cliente_del_plugin() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = fake_store();
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let reading = read_events(&test_bus::client(true), DESDE, HASTA)
+            .await
+            .unwrap();
+
+        assert!(reading.available);
+        let uids: Vec<_> = reading
+            .reading
+            .eventos
+            .iter()
+            .map(|e| e.event.uid.as_str())
+            .collect();
+        assert_eq!(uids, ["google/1", "google/2"]);
+        assert_eq!(reading.reading.calendarios.len(), 1);
+        assert_eq!(
+            calls.taken(),
+            [
+                "ListCalendars".to_string(),
+                format!("ListOccurrences {DESDE} {HASTA} [] \"\" {PAGE_SIZE}"),
+                format!("ListOccurrences {DESDE} {HASTA} [] \"1\" {PAGE_SIZE}"),
+            ]
+        );
+    }
+
+    /// Si el dueño del nombre no es el sincronizador de verdad, no se le pide
+    /// nada y la lectura falla: la ventana lee cuenta por cuenta, en vez de
+    /// dibujar un mes que inventó otro programa.
+    #[tokio::test]
+    async fn a_un_impostor_no_se_le_pide_el_mes() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = fake_store();
+        let calls = store.calls.clone();
+        let _impostor = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = read_events(&test_bus::client(false), DESDE, HASTA)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());
+        assert!(calls.taken().is_empty(), "{:?}", calls.taken());
+    }
+
+    /// Sin sincronizador en el bus la lectura falla, no se queda esperando ni
+    /// devuelve un mes vacío.
+    #[tokio::test]
+    async fn sin_sincronizador_la_lectura_falla() {
+        let _turno = test_bus::exclusive();
+        let _bus = PrivateBus::start();
+
+        let error = read_events(&test_bus::client(true), DESDE, HASTA)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, tauri_plugin_vsk_store::Error::NotRunning.to_string());
+    }
 }
