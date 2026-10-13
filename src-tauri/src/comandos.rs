@@ -20,6 +20,7 @@ use crate::caldav::{self, Calendario, Event};
 use crate::cuentas::{self, CuentaConCalendario};
 use crate::recurrence::Window;
 use crate::store::{self, StoreReading};
+use tauri_plugin_vsk_store::StoreExt;
 
 /// Un evento y de qué calendario salió.
 ///
@@ -109,23 +110,15 @@ pub async fn account_events<R: tauri::Runtime>(
 /// sistema: ya sincronizados y con las series expandidas, sin esperar a la
 /// red. Con `available: false` la ventana lee como antes, cuenta por cuenta.
 #[tauri::command]
-pub async fn store_events(from: String, to: String) -> Result<StoreReading, String> {
+pub async fn store_events(
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+) -> Result<StoreReading, String> {
     // Se valida igual que el camino de cada cuenta: un rango dado vuelta se ve
     // igual que un mes vacío.
     rango(&from, &to)?;
-    store::read_events(&from, &to).await
-}
-
-/// El botón «Actualizar»: pide al sincronizador que traiga ya lo nuevo.
-#[tauri::command]
-pub async fn request_sync(account_ids: Vec<String>) -> Vec<store::SyncRequestFailure> {
-    store::request_sync(&account_ids).await
-}
-
-/// El estado de la sincronización del calendario de cada cuenta.
-#[tauri::command]
-pub async fn sync_status() -> Result<Vec<store::AccountSyncStatus>, String> {
-    store::sync_status().await
+    store::read_events(&app.store(), &from, &to).await
 }
 
 /// Lee el rango que mandó la ventana.

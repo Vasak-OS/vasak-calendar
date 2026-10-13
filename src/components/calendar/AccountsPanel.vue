@@ -1,4 +1,10 @@
 <script lang="ts" setup>
+import {
+	type AccountSyncStatus,
+	type SyncLine,
+	type SyncRequestFailure,
+	syncLine,
+} from '@vasakgroup/plugin-vsk-store';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
@@ -12,12 +18,6 @@ import TimeZonePicker from '@/components/calendar/TimeZonePicker.vue';
 import type { Calendario, Cuenta } from '@/composables/use-calendario';
 import { interpolar } from '@/tools/interpolar';
 import { NARROW_ONLY } from '@/tools/narrow-layout';
-import {
-	type AccountSyncStatus,
-	type SyncLine,
-	type SyncRequestFailure,
-	syncLine,
-} from '@/tools/sync-status';
 
 const props = defineProps<{
 	accounts: Cuenta[];

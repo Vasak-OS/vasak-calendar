@@ -1,8 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import {
+	type AccountSyncStatus,
+	onStoreChanged,
+	onSyncStatus,
+	requestSync,
+	type SyncRequestFailure,
+	syncStatus,
+} from '@vasakgroup/plugin-vsk-store';
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
-import type { AccountSyncStatus, SyncRequestFailure } from '@/tools/sync-status';
 import {
 	type CalendarView,
 	DEFAULT_VIEW,
@@ -64,12 +71,6 @@ interface StoreReading extends LecturaDeCuenta {
 	/** Si el almacén tiene calendarios. Si no, se lee cuenta por cuenta. */
 	available: boolean;
 }
-
-/** El aviso del programa de que cambió el estado de la sincronización. */
-const SYNC_STATUS_EVENT = 'calendar-sync-status';
-
-/** El aviso del programa de que cambió lo guardado del calendario. */
-const STORE_CHANGED_EVENT = 'calendar-changed';
 
 /**
  * El mes que se está mirando y lo que hay en él.
@@ -292,8 +293,7 @@ export function useCalendario() {
 	 */
 	async function loadSyncStatus() {
 		try {
-			const statuses = await invoke<AccountSyncStatus[]>('sync_status');
-			syncStatuses.value = Array.isArray(statuses) ? statuses : [];
+			syncStatuses.value = await syncStatus('calendar');
 		} catch (e) {
 			console.error('no se pudo leer el estado de la sincronización', e);
 		}
@@ -302,15 +302,14 @@ export function useCalendario() {
 	/**
 	 * El botón «Actualizar»: le pide al sincronizador que traiga ya lo nuevo de
 	 * cada cuenta, y relee lo que hay mientras tanto. Lo que llegue después se
-	 * avisa con [`STORE_CHANGED_EVENT`].
+	 * avisa con el aviso de cambios del almacén.
 	 */
 	async function refresh() {
 		// Las que hay que reconectar no: el sincronizador no puede con ellas
 		// hasta que la persona lo haga desde Configuración.
 		const accountIds = cuentas.value.filter((c) => !c.necesita_reconectarse).map((c) => c.id);
 		try {
-			const failures = await invoke<SyncRequestFailure[]>('request_sync', { accountIds });
-			refreshFailures.value = Array.isArray(failures) ? failures : [];
+			refreshFailures.value = await requestSync(accountIds);
 		} catch (e) {
 			console.error('no se pudo pedir una vuelta al sincronizador', e);
 			refreshFailures.value = accountIds.map((account_id) => ({
@@ -403,7 +402,7 @@ export function useCalendario() {
 	// momento» deja de valer en cuanto hay una vuelta en marcha.
 	let stopWatchingStatus: UnlistenFn | null = null;
 	void loadSyncStatus();
-	listen(SYNC_STATUS_EVENT, () => {
+	onSyncStatus(() => {
 		refreshFailures.value = refreshFailures.value.filter((f) => f.reason !== 'too_soon');
 		void loadSyncStatus();
 	})
@@ -421,7 +420,7 @@ export function useCalendario() {
 	// Lo nuevo que trae el sincronizador en segundo plano: se relee el mes a
 	// la vista. Sin preguntar a intervalos.
 	let stopWatchingStore: UnlistenFn | null = null;
-	listen(STORE_CHANGED_EVENT, () => {
+	onStoreChanged(() => {
 		void cargar();
 	})
 		.then((cancelar) => {

@@ -7,30 +7,18 @@
 //! bus de sesión —`ar.net.vasak.os.AccountsStore`— y **no espera a la red**: el
 //! mes aparece al abrir, y las repeticiones ya vienen expandidas.
 //!
-//! Lo nuevo se avisa con la señal `Changed("calendar", …)`, que se pasa a la
-//! ventana como el evento [`CHANGED_EVENT`]; el botón «Actualizar» le pide al
-//! sincronizador una vuelta ya, con `RequestSync`.
-//!
-//! La primera lectura puede abrir el diálogo de `vasak-permissions`
-//! (`store.calendar`): por eso las llamadas no tienen tope de tiempo.
+//! Todo pasa por `tauri-plugin-vsk-store`, que comprueba que el dueño del
+//! nombre del sincronizador sea el de verdad antes de creerle nada, pasa a la
+//! ventana los avisos de lo nuevo y del estado, y atiende «Actualizar». Acá
+//! queda sólo lo propio del calendario: qué se pide y cómo se convierte en lo
+//! que dibuja la cuadrícula.
 
 use serde::{Deserialize, Serialize};
 
+use tauri_plugin_vsk_store::StoreClient;
+
 use crate::caldav::{Calendario, Event};
 use crate::comandos::{EventInCalendar, LecturaDeCuenta};
-
-const SERVICE: &str = "ar.net.vasak.os.AccountsSync";
-const PATH: &str = "/ar/net/vasak/os/AccountsStore";
-const INTERFACE: &str = "ar.net.vasak.os.AccountsStore";
-
-/// El aviso a la ventana de que cambió lo guardado del calendario.
-pub const CHANGED_EVENT: &str = "calendar-changed";
-
-/// El aviso a la ventana de que cambió el estado de la sincronización.
-pub const STATUS_EVENT: &str = "calendar-sync-status";
-
-/// Cuánto se juntan los avisos seguidos antes de pasarlos a la ventana.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Cuántas ocurrencias se piden por página: el máximo que acepta el almacén.
 const PAGE_SIZE: u32 = 1000;
@@ -99,26 +87,6 @@ pub struct StoreReading {
     pub available: bool,
 }
 
-async fn connect() -> Result<zbus::Connection, String> {
-    zbus::Connection::session()
-        .await
-        .map_err(|e| format!("no se pudo contactar al almacén del sistema: {e}"))
-}
-
-async fn call<A>(metodo: &str, argumentos: &A) -> Result<String, String>
-where
-    A: serde::ser::Serialize + zbus::zvariant::DynamicType,
-{
-    connect()
-        .await?
-        .call_method(Some(SERVICE), PATH, Some(INTERFACE), metodo, argumentos)
-        .await
-        .map_err(|e| format!("{metodo}: {e}"))?
-        .body()
-        .deserialize()
-        .map_err(|e| format!("respuesta inválida de {metodo}: {e}"))
-}
-
 /// Los calendarios de eventos del almacén. Las listas que sólo tienen tareas
 /// no van: no tienen nada que dibujar en la cuadrícula.
 pub fn calendars_from(guardados: Vec<StoredCalendar>) -> Vec<Calendario> {
@@ -157,26 +125,36 @@ pub fn event_from(o: StoredOccurrence) -> EventInCalendar {
     }
 }
 
-/// Los calendarios y los eventos de todas las cuentas en `[desde, hasta)`.
-pub async fn read_events(desde: &str, hasta: &str) -> Result<StoreReading, String> {
-    let json = call("ListCalendars", &()).await?;
-    read_pages(&json, |cursor| async move {
-        call(
-            "ListOccurrences",
-            &(
-                desde,
-                hasta,
-                Vec::<String>::new(),
-                cursor.as_str(),
-                PAGE_SIZE,
-            ),
-        )
+/// Los calendarios y los eventos de todas las cuentas en `[desde, hasta)`, por
+/// el cliente comprobado del plugin.
+pub async fn read_events(
+    store: &StoreClient,
+    desde: &str,
+    hasta: &str,
+) -> Result<StoreReading, String> {
+    let json = store
+        .call_json("ListCalendars", &())
         .await
+        .map_err(|e| e.to_string())?;
+    read_pages(&json, |cursor| async move {
+        store
+            .call_json(
+                "ListOccurrences",
+                &(
+                    desde,
+                    hasta,
+                    Vec::<String>::new(),
+                    cursor.as_str(),
+                    PAGE_SIZE,
+                ),
+            )
+            .await
+            .map_err(|e| e.to_string())
     })
     .await
 }
 
-/// Lo que hace [`eventos`] con lo que contesta el almacén, sin el bus: la lista
+/// Lo que hace [`read_events`] con lo que contesta el almacén, sin el bus: la lista
 /// de calendarios ya leída, y `pagina` que pide una página por su cursor.
 async fn read_pages<F, Fut>(calendarios_json: &str, mut pagina: F) -> Result<StoreReading, String>
 where
@@ -225,226 +203,6 @@ where
         reading,
         available: true,
     })
-}
-
-/// Una cuenta a la que no se le pudo pedir una vuelta, y por qué. La ventana
-/// lo dice al lado de la cuenta: un «Actualizar» que no hizo nada y no lo dice
-/// se lee como que no había nada nuevo.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SyncRequestFailure {
-    pub account_id: String,
-    /// `denied` (sin permiso), `too_soon` (se pidió hace un momento),
-    /// `unavailable` (el sincronizador no está) o `failed`.
-    pub reason: &'static str,
-}
-
-/// Por qué no se aceptó un pedido, a partir del nombre del error de D-Bus.
-pub fn failure_reason(error_name: Option<&str>) -> &'static str {
-    match error_name {
-        Some("org.freedesktop.DBus.Error.AccessDenied") => "denied",
-        Some("org.freedesktop.DBus.Error.LimitsExceeded") => "too_soon",
-        Some("org.freedesktop.DBus.Error.ServiceUnknown")
-        | Some("org.freedesktop.DBus.Error.NameHasNoOwner")
-        | Some("org.freedesktop.DBus.Error.UnknownObject")
-        | Some("org.freedesktop.DBus.Error.UnknownMethod") => "unavailable",
-        _ => "failed",
-    }
-}
-
-/// El nombre de un error de D-Bus, si lo tiene.
-fn error_name(error: &zbus::Error) -> Option<String> {
-    match error {
-        zbus::Error::MethodError(name, _, _) => Some(name.to_string()),
-        zbus::Error::FDO(e) => Some(zbus::DBusError::name(e.as_ref()).to_string()),
-        _ => None,
-    }
-}
-
-/// Le pide al sincronizador una vuelta ya de unas cuentas: el botón
-/// «Actualizar». No espera a que termine: lo nuevo se avisa con [`CHANGED_EVENT`]
-/// y el estado con [`STATUS_EVENT`]. Devuelve las cuentas a las que no se les
-/// pudo pedir; un fallo de una no frena a las demás.
-pub async fn request_sync(account_ids: &[String]) -> Vec<SyncRequestFailure> {
-    let conexion = match connect().await {
-        Ok(conexion) => conexion,
-        Err(e) => {
-            eprintln!("[calendario] no se pudo pedir una vuelta: {e}");
-            return account_ids
-                .iter()
-                .map(|id| SyncRequestFailure {
-                    account_id: id.clone(),
-                    reason: "unavailable",
-                })
-                .collect();
-        }
-    };
-    let mut failures = Vec::new();
-    for id in account_ids {
-        if let Err(e) = conexion
-            .call_method(
-                Some(SERVICE),
-                PATH,
-                Some(INTERFACE),
-                "RequestSync",
-                &(id.as_str(),),
-            )
-            .await
-        {
-            let reason = failure_reason(error_name(&e).as_deref());
-            eprintln!("[calendario] no se pudo pedir una vuelta de una cuenta ({reason})");
-            failures.push(SyncRequestFailure {
-                account_id: id.clone(),
-                reason,
-            });
-        }
-    }
-    failures
-}
-
-/// El estado de la sincronización del calendario de una cuenta, como lo da
-/// `GetStatus`.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct AccountSyncStatus {
-    pub account_id: String,
-    /// `off`, `pending`, `syncing`, `synced`, `unavailable` o `failed`.
-    pub state: String,
-    /// Qué pasó, si falló o no está disponible. Lo escribe el almacén.
-    pub detail: String,
-    /// Cuándo terminó la última vuelta buena (RFC 3339), si hubo.
-    pub last_synced_at: Option<String>,
-}
-
-/// El estado del área `area` de cada cuenta, de la respuesta de `GetStatus`.
-/// Las cuentas sin esa área no aparecen.
-pub fn statuses_from(json: &str, area: &str) -> Result<Vec<AccountSyncStatus>, String> {
-    let value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("no se pudo leer el estado del almacén: {e}"))?;
-    let accounts = value
-        .get("accounts")
-        .and_then(|a| a.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let text =
-        |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
-    Ok(accounts
-        .iter()
-        .filter_map(|account| {
-            let shown = account.get(area)?;
-            Some(AccountSyncStatus {
-                account_id: text(account, "account_id")?,
-                state: text(shown, "state").unwrap_or_else(|| "off".into()),
-                detail: text(shown, "detail").unwrap_or_default(),
-                last_synced_at: text(shown, "last_synced_at"),
-            })
-        })
-        .collect())
-}
-
-/// El estado de la sincronización del calendario de cada cuenta.
-pub async fn sync_status() -> Result<Vec<AccountSyncStatus>, String> {
-    let json = call("GetStatus", &()).await?;
-    statuses_from(&json, "calendar")
-}
-
-/// Pasa a la ventana cada `Changed("calendar", …)` del almacén.
-pub fn watch(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        // En bucle: el bus se puede cortar, y con un solo intento la ventana
-        // dejaría de enterarse de lo nuevo hasta que se la cierre.
-        loop {
-            if let Err(e) = follow(&app).await {
-                eprintln!("[calendario] no se pueden recibir avisos del almacén: {e}");
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-        }
-    });
-}
-
-/// Qué señales del almacén despiertan a la ventana.
-///
-/// El bus filtra por el primer argumento: un lote de correo o de contactos no
-/// despierta a esta ventana.
-fn change_rule() -> Result<zbus::MatchRule<'static>, String> {
-    Ok(zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        // Sólo del dueño del nombre del sincronizador y de su objeto: cualquier
-        // proceso de la sesión puede emitir una señal con esta interfaz, y cada
-        // una hace releer el mes.
-        .sender(SERVICE)
-        .and_then(|r| r.path(PATH))
-        .and_then(|r| r.interface(INTERFACE))
-        .and_then(|r| r.member("Changed"))
-        .and_then(|r| r.arg(0, "calendar"))
-        .map_err(|e| format!("no se pudo armar el filtro del almacén: {e}"))?
-        .build())
-}
-
-/// La señal de que cambió el estado de alguna base: `StatusChanged`, sin
-/// argumentos, también sólo del sincronizador y de su objeto.
-fn status_rule() -> Result<zbus::MatchRule<'static>, String> {
-    Ok(zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender(SERVICE)
-        .and_then(|r| r.path(PATH))
-        .and_then(|r| r.interface(INTERFACE))
-        .and_then(|r| r.member("StatusChanged"))
-        .map_err(|e| format!("no se pudo armar el filtro del estado: {e}"))?
-        .build())
-}
-
-/// Qué avisó el almacén.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Notice {
-    Changed,
-    Status,
-}
-
-/// Qué eventos recibe la ventana por una ráfaga de avisos: uno de cada clase
-/// que llegó, nunca uno por aviso. Un `StatusChanged` solo no relee el mes, y un
-/// `Changed` solo no relee el estado.
-fn events_for(burst: &[Notice]) -> Vec<&'static str> {
-    let mut events = Vec::new();
-    if burst.contains(&Notice::Changed) {
-        events.push(CHANGED_EVENT);
-    }
-    if burst.contains(&Notice::Status) {
-        events.push(STATUS_EVENT);
-    }
-    events
-}
-
-async fn follow(app: &tauri::AppHandle) -> Result<(), String> {
-    use futures_util::StreamExt;
-    use tauri::Emitter;
-
-    let conexion = connect().await?;
-    let changes = zbus::MessageStream::for_match_rule(change_rule()?, &conexion, None)
-        .await
-        .map_err(|e| format!("no se pudo escuchar al almacén: {e}"))?
-        .map(|m| m.map(|_| Notice::Changed));
-    let statuses = zbus::MessageStream::for_match_rule(status_rule()?, &conexion, None)
-        .await
-        .map_err(|e| format!("no se pudo escuchar el estado del almacén: {e}"))?
-        .map(|m| m.map(|_| Notice::Status));
-    let mut avisos = futures_util::stream::select(changes, statuses);
-    while let Some(aviso) = avisos.next().await {
-        let Ok(first) = aviso else {
-            continue;
-        };
-        // Una vuelta escribe de a lotes y avisa por cada uno: los seguidos se
-        // juntan, y la ventana recibe un aviso de cada clase.
-        tokio::time::sleep(SETTLE).await;
-        let mut seen = vec![first];
-        while let Some(Some(next)) = futures_util::FutureExt::now_or_never(avisos.next()) {
-            if let Ok(kind) = next {
-                seen.push(kind);
-            }
-        }
-        for event in events_for(&seen) {
-            let _ = app.emit(event, ());
-        }
-    }
-    Err("el bus de sesión cerró la conexión".into())
 }
 
 #[cfg(test)]
@@ -811,316 +569,4 @@ mod tests {
     }
 
     // ── Qué avisos despiertan a la ventana ─────────────────────────────────
-
-    /// Sólo `Changed("calendar", …)` de la interfaz del almacén: un lote de
-    /// correo o de contactos no relee el mes.
-    #[test]
-    fn solo_los_cambios_del_calendario_despiertan_a_la_ventana() {
-        let regla = change_rule().unwrap().to_string();
-        for parte in [
-            "type='signal'",
-            "interface='ar.net.vasak.os.AccountsStore'",
-            "member='Changed'",
-            "arg0='calendar'",
-        ] {
-            assert!(regla.contains(parte), "falta {parte} en {regla}");
-        }
-    }
-
-    /// Cualquier proceso de la sesión puede emitir una señal con la interfaz
-    /// del almacén: sólo cuenta la del dueño del nombre del sincronizador, y
-    /// desde su objeto.
-    #[test]
-    fn solo_cuenta_el_changed_del_sincronizador_y_de_su_objeto() {
-        let regla = change_rule().unwrap().to_string();
-        for parte in [
-            "sender='ar.net.vasak.os.AccountsSync'",
-            "path='/ar/net/vasak/os/AccountsStore'",
-        ] {
-            assert!(regla.contains(parte), "falta {parte} en {regla}");
-        }
-    }
-
-    /// El área de esta ventana en `GetStatus`, y otra que no tiene que mirar.
-    const AREA: &str = "calendar";
-    const OTHER_AREA: &str = "email";
-    /// Los eventos que escucha la ventana (`src/composables`, `src/views`).
-    const EXPECTED_CHANGED_EVENT: &str = "calendar-changed";
-    const EXPECTED_STATUS_EVENT: &str = "calendar-sync-status";
-
-    // ── El estado de la sincronización ─────────────────────────────────────
-
-    /// La respuesta de `GetStatus` como la arma `visible_status` en
-    /// `vasak-accounts/sync/src/store_api.rs`: con permiso sobre el área van
-    /// `detail` y `last_synced_at`; sin permiso, sólo `state`.
-    fn status_json() -> String {
-        let mut con_permiso = serde_json::json!({
-            "account_id": "google",
-            "state": "ready",
-            "detail": "",
-            "size_bytes": 10,
-        });
-        con_permiso[AREA] = serde_json::json!({
-            "state": "synced",
-            "detail": "",
-            "last_synced_at": "2026-10-13T17:05:00Z",
-        });
-        con_permiso[OTHER_AREA] = serde_json::json!({ "state": "failed" });
-        let mut fallida = serde_json::json!({ "account_id": "nube", "state": "ready" });
-        fallida[AREA] = serde_json::json!({
-            "state": "failed",
-            "detail": "el servidor rechazó la clave",
-            "last_synced_at": null,
-        });
-        let mut de_otra_area = serde_json::json!({ "account_id": "otra", "state": "ready" });
-        de_otra_area[OTHER_AREA] = serde_json::json!({ "state": "syncing" });
-        let mut sin_permiso = serde_json::json!({ "account_id": "ajena", "state": "ready" });
-        sin_permiso[AREA] = serde_json::json!({ "state": "pending" });
-        serde_json::json!({
-            "keyring": "unlocked",
-            "accounts": [con_permiso, fallida, de_otra_area, sin_permiso],
-        })
-        .to_string()
-    }
-
-    fn estado(id: &str, state: &str, detail: &str, last: Option<&str>) -> AccountSyncStatus {
-        AccountSyncStatus {
-            account_id: id.into(),
-            state: state.into(),
-            detail: detail.into(),
-            last_synced_at: last.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn el_estado_de_cada_cuenta_sale_de_su_area() {
-        assert_eq!(
-            statuses_from(&status_json(), AREA).unwrap(),
-            vec![
-                estado("google", "synced", "", Some("2026-10-13T17:05:00Z")),
-                estado("nube", "failed", "el servidor rechazó la clave", None),
-                // Sin permiso sobre el área el almacén manda sólo el estado: se
-                // muestra igual, sin detalle ni hora.
-                estado("ajena", "pending", "", None),
-            ]
-        );
-    }
-
-    /// Una cuenta que no tiene esta área —sólo otra— no tiene nada que decir
-    /// acá: si apareciera, se le mostraría el estado de otra área.
-    #[test]
-    fn una_cuenta_sin_esta_area_no_aparece() {
-        let ids: Vec<_> = statuses_from(&status_json(), AREA)
-            .unwrap()
-            .into_iter()
-            .map(|s| s.account_id)
-            .collect();
-        assert!(!ids.contains(&"otra".to_string()), "{ids:?}");
-        // Y de la que tiene las dos, el estado es el de esta área.
-        let google = statuses_from(&status_json(), AREA).unwrap().remove(0);
-        assert_eq!(google.state, "synced");
-    }
-
-    #[test]
-    fn un_area_sin_estado_se_lee_apagada() {
-        let mut cuenta = serde_json::json!({ "account_id": "google" });
-        cuenta[AREA] = serde_json::json!({});
-        let json = serde_json::json!({ "accounts": [cuenta] }).to_string();
-        assert_eq!(
-            statuses_from(&json, AREA).unwrap(),
-            vec![estado("google", "off", "", None)]
-        );
-    }
-
-    #[test]
-    fn una_cuenta_sin_id_no_se_muestra() {
-        let mut cuenta = serde_json::json!({ "state": "ready" });
-        cuenta[AREA] = serde_json::json!({ "state": "synced" });
-        let json = serde_json::json!({ "accounts": [cuenta] }).to_string();
-        assert_eq!(statuses_from(&json, AREA).unwrap(), vec![]);
-    }
-
-    #[test]
-    fn una_respuesta_que_no_es_json_es_un_error() {
-        assert!(statuses_from("no es json", AREA).is_err());
-    }
-
-    /// Un almacén que todavía no tiene cuentas, o que contesta otra cosa en
-    /// `accounts`, es ningún estado: no es un error que haya que mostrar.
-    #[test]
-    fn una_respuesta_sin_cuentas_no_tiene_estados() {
-        assert_eq!(
-            statuses_from(r#"{"keyring":"locked"}"#, AREA).unwrap(),
-            vec![]
-        );
-        assert_eq!(statuses_from(r#"{"accounts":3}"#, AREA).unwrap(), vec![]);
-        assert_eq!(statuses_from("[]", AREA).unwrap(), vec![]);
-    }
-
-    /// Lo que viaja a la ventana tiene que tener **exactamente** los nombres
-    /// que lee `src/tools/sync-status.ts`: Tauri no los convierte.
-    #[test]
-    fn el_estado_y_los_rechazos_llegan_con_los_nombres_de_la_ventana() {
-        let json =
-            serde_json::to_value(estado("google", "synced", "", Some("2026-10-13T17:05:00Z")))
-                .unwrap();
-        let mut claves: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
-        claves.sort();
-        assert_eq!(claves, ["account_id", "detail", "last_synced_at", "state"]);
-        // Sin hora, `null`: el tipo de la ventana es `string | null`.
-        let sin_hora = serde_json::to_value(estado("google", "pending", "", None)).unwrap();
-        assert!(sin_hora["last_synced_at"].is_null());
-
-        let rechazo = serde_json::to_value(SyncRequestFailure {
-            account_id: "google".into(),
-            reason: "denied",
-        })
-        .unwrap();
-        assert_eq!(
-            rechazo,
-            serde_json::json!({ "account_id": "google", "reason": "denied" })
-        );
-    }
-
-    // ── Lo que «Actualizar» no pudo pedir ──────────────────────────────────
-
-    #[test]
-    fn cada_rechazo_del_almacen_tiene_su_motivo() {
-        for (nombre, motivo) in [
-            ("org.freedesktop.DBus.Error.AccessDenied", "denied"),
-            ("org.freedesktop.DBus.Error.LimitsExceeded", "too_soon"),
-            ("org.freedesktop.DBus.Error.ServiceUnknown", "unavailable"),
-            ("org.freedesktop.DBus.Error.NameHasNoOwner", "unavailable"),
-            ("org.freedesktop.DBus.Error.UnknownObject", "unavailable"),
-            ("org.freedesktop.DBus.Error.UnknownMethod", "unavailable"),
-            ("org.freedesktop.DBus.Error.Failed", "failed"),
-            ("ar.net.vasak.os.Error.Otro", "failed"),
-        ] {
-            assert_eq!(failure_reason(Some(nombre)), motivo, "{nombre}");
-        }
-        // Un error que no es de D-Bus —se cortó la conexión— también falló.
-        assert_eq!(failure_reason(None), "failed");
-    }
-
-    /// Una respuesta de error de verdad, como la que llega por el bus. Así es
-    /// como `call_method` devuelve el `LimitsExceeded` del almacén: un
-    /// `MethodError`, no un `FDO`.
-    fn error_reply(nombre: &str) -> zbus::Error {
-        let pedido = zbus::Message::method_call(PATH, "RequestSync")
-            .unwrap()
-            .build(&("google",))
-            .unwrap();
-        let respuesta = zbus::Message::error(&pedido.header(), nombre)
-            .unwrap()
-            .build(&("una por cuenta cada minuto",))
-            .unwrap();
-        zbus::Error::from(respuesta)
-    }
-
-    #[test]
-    fn el_motivo_sale_del_nombre_de_la_respuesta_de_error() {
-        let limite = error_reply("org.freedesktop.DBus.Error.LimitsExceeded");
-        assert!(matches!(limite, zbus::Error::MethodError(..)), "{limite:?}");
-        assert_eq!(failure_reason(error_name(&limite).as_deref()), "too_soon");
-
-        let sin_permiso = error_reply("org.freedesktop.DBus.Error.AccessDenied");
-        assert_eq!(
-            failure_reason(error_name(&sin_permiso).as_deref()),
-            "denied"
-        );
-
-        // El mismo error ya convertido a `fdo::Error` da el mismo motivo.
-        let fdo = zbus::Error::from(zbus::fdo::Error::AccessDenied("no".into()));
-        assert!(matches!(fdo, zbus::Error::FDO(_)), "{fdo:?}");
-        assert_eq!(failure_reason(error_name(&fdo).as_deref()), "denied");
-
-        assert_eq!(error_name(&zbus::Error::InvalidReply), None);
-    }
-
-    /// Sin bus de sesión no se le pudo pedir nada a nadie: cada cuenta pedida
-    /// vuelve como sin servicio, y la ventana lo dice al lado de cada una.
-    #[test]
-    fn sin_bus_cada_cuenta_pedida_queda_sin_servicio() {
-        const VARIABLE: &str = "DBUS_SESSION_BUS_ADDRESS";
-        let antes = std::env::var_os(VARIABLE);
-        std::env::set_var(VARIABLE, "unix:path=/nonexistent/vasak-qa/bus");
-        let ids = vec!["google".to_string(), "nube".to_string()];
-        let fallos = tauri::async_runtime::block_on(request_sync(&ids));
-        match antes {
-            Some(valor) => std::env::set_var(VARIABLE, valor),
-            None => std::env::remove_var(VARIABLE),
-        }
-        assert_eq!(
-            fallos,
-            vec![
-                SyncRequestFailure {
-                    account_id: "google".into(),
-                    reason: "unavailable",
-                },
-                SyncRequestFailure {
-                    account_id: "nube".into(),
-                    reason: "unavailable",
-                },
-            ]
-        );
-    }
-
-    // ── El aviso del estado ────────────────────────────────────────────────
-
-    /// `StatusChanged` también sólo del sincronizador y de su objeto: si no,
-    /// cualquier proceso de la sesión haría releer el estado a voluntad.
-    #[test]
-    fn solo_cuenta_el_status_changed_del_sincronizador_y_de_su_objeto() {
-        let regla = status_rule().unwrap().to_string();
-        for parte in [
-            "type='signal'",
-            "sender='ar.net.vasak.os.AccountsSync'",
-            "path='/ar/net/vasak/os/AccountsStore'",
-            "interface='ar.net.vasak.os.AccountsStore'",
-            "member='StatusChanged'",
-        ] {
-            assert!(regla.contains(parte), "falta {parte} en {regla}");
-        }
-    }
-
-    /// Una vuelta escribe de a lotes y avisa por cada uno: la ventana recibe
-    /// un solo aviso por ráfaga, no uno por lote.
-    #[test]
-    fn una_rafaga_de_cambios_avisa_una_sola_vez() {
-        assert_eq!(
-            events_for(&[Notice::Changed, Notice::Changed, Notice::Changed]),
-            [CHANGED_EVENT]
-        );
-    }
-
-    /// Un cambio de estado solo no relee lo guardado, y un cambio de lo
-    /// guardado solo no relee el estado.
-    #[test]
-    fn cada_clase_de_aviso_despierta_solo_lo_suyo() {
-        assert_eq!(
-            events_for(&[Notice::Status, Notice::Status]),
-            [STATUS_EVENT]
-        );
-        assert_eq!(events_for(&[Notice::Changed]), [CHANGED_EVENT]);
-    }
-
-    #[test]
-    fn una_rafaga_mixta_avisa_una_vez_de_cada_clase() {
-        assert_eq!(
-            events_for(&[
-                Notice::Status,
-                Notice::Changed,
-                Notice::Status,
-                Notice::Changed
-            ]),
-            [CHANGED_EVENT, STATUS_EVENT]
-        );
-        assert!(events_for(&[]).is_empty());
-    }
-
-    #[test]
-    fn los_avisos_a_la_ventana_tienen_los_nombres_que_escucha() {
-        assert_eq!(CHANGED_EVENT, EXPECTED_CHANGED_EVENT);
-        assert_eq!(STATUS_EVENT, EXPECTED_STATUS_EVENT);
-    }
 }
