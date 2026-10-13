@@ -3,16 +3,24 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
+import ColumnsView from '@/components/calendar/ColumnsView.vue';
 import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
+import ViewSwitcher from '@/components/calendar/ViewSwitcher.vue';
+import YearView from '@/components/calendar/YearView.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
+import { periodTitle } from '@/tools/views';
+import { civilDe } from '@/tools/zona';
 
 const { t, locale } = useI18n();
 const {
-	mes,
+	view,
+	anchor,
+	setView,
+	show,
 	zona,
 	zonaElegida,
 	zonaDelSistema,
@@ -28,25 +36,30 @@ const {
 	refresh,
 	syncStatuses,
 	refreshFailures,
-	mesAnterior,
-	mesSiguiente,
-	irAHoy,
+	goPrevious,
+	goNext,
+	goToToday,
 } = useCalendario();
 
 /**
- * «septiembre de 2026», en el idioma de la sesión y sin traducirlo a mano.
- *
- * Con `timeZone`: el mes se guarda como el instante de su día 1, y ese instante
- * leído en la zona del sistema puede caer el último día del mes anterior. Sin
- * esto, mirar la agenda en una zona al este y el título decía el mes equivocado.
+ * El título del período que se está mirando —el mes, el día, la semana, el
+ * año—, en el idioma de la sesión y en la zona de la agenda (`tools/views.ts`).
  */
 const title = computed(() =>
-	new Intl.DateTimeFormat(locale.value, {
-		month: 'long',
-		year: 'numeric',
-		timeZone: zona.value,
-	}).format(mes.value)
+	periodTitle(view.value, anchor.value, dias.value, zona.value, locale.value)
 );
+
+/**
+ * Qué dicen las flechas según la vista. En el mes hablan de meses —y así lo
+ * dejan las claves de siempre—; en las demás vistas son genéricas, porque lo
+ * que mueven cambia (un día, una semana, un año).
+ */
+const navLabels = computed(() =>
+	view.value === 'month' ? {} : { previousLabel: t('nav.previous'), nextLabel: t('nav.next') }
+);
+
+/** El año que mira la vista de año: el de `anchor`, en la zona de la agenda. */
+const yearNumber = computed(() => civilDe(anchor.value, zona.value).anio);
 
 /**
  * La columna que se mira con la ventana angosta (`tools/narrow-layout.ts`).
@@ -63,62 +76,59 @@ const pane = ref<Pane>('month');
 async function go(next: Pane) {
 	pane.value = next;
 	await nextTick();
-	// El marcador va en el envoltorio del botón y no en el botón: con las
-	// plantillas estrictas, un atributo que el componente no declara no compila.
 	const target = document.querySelector<HTMLElement>(`[data-nav="${next}"] button`);
 	target?.focus();
 }
 
-/** La agenda, para llevarla al día de hoy. Sólo se ve con la ventana angosta. */
-const agenda = ref<InstanceType<typeof MonthAgenda> | null>(null);
+/**
+ * Las listas que se pueden llevar al día de hoy: el mes como agenda —con la
+ * ventana angosta— y la vista de agenda. Las dos son `MonthAgenda`, y sólo una
+ * existe por vez según la vista.
+ */
+const monthAgenda = ref<InstanceType<typeof MonthAgenda> | null>(null);
+const agendaView = ref<InstanceType<typeof MonthAgenda> | null>(null);
+
+/** Lleva la lista al día de hoy, en las vistas que son una lista. */
+function scrollListToToday() {
+	monthAgenda.value?.showToday();
+	agendaView.value?.showToday();
+}
 
 /**
- * «Hoy»: el mes de hoy y, en la agenda, la lista en el día de hoy.
+ * «Hoy»: lleva el foco al día de hoy y, en las vistas de lista, la deja en él.
  *
- * Después de cargar y de que se dibuje: el día de hoy no está en la lista
- * hasta que el mes cambió, y sus eventos llegan con la carga. Con la ventana
- * ancha la agenda está oculta y moverla no hace nada que se vea, así que no
- * hace falta preguntar cuál de las dos se está mirando.
+ * Después de cargar y de que se dibuje: el día de hoy y sus eventos llegan con
+ * la carga, y la lista no está hasta que la vista se volvió a dibujar.
  */
-async function goToToday() {
-	await irAHoy();
+async function onToday() {
+	await goToToday();
 	await nextTick();
-	agenda.value?.showToday();
+	scrollListToToday();
 }
 
 onMounted(async () => {
 	await cargar();
-	// Se abre en el mes de hoy: con la ventana angosta, la agenda arranca en
-	// el día de hoy y no en el primero del mes, como en un teléfono.
+	// Se abre en hoy: con la ventana angosta —o en la agenda— la lista arranca
+	// en el día de hoy y no en el primero del mes, como en un teléfono.
 	await nextTick();
-	agenda.value?.showToday();
+	scrollListToToday();
 });
 </script>
 
 <template>
   <WindowAppLayout>
-    <!-- El icono de la aplicación, a la izquierda de todo, como en el resto
-         del escritorio. Va en `identidad` y no en la ranura del contenido:
-         cuando la barra queda a un costado, es la única parte que no se
-         desplaza con lo demás. -->
+    <!-- El icono de la aplicación, a la izquierda de todo, como en el resto del
+         escritorio. Va en `identidad`: cuando la barra queda a un costado, es la
+         única parte que no se desplaza con lo demás. -->
     <template #identidad>
-      <!-- El icono de la aplicación, no un símbolo: es la identidad de la
-           ventana y va a color, como en el resto del escritorio. `icon` es lo
-           que `ThemeIcon` trae por omisión. -->
       <ThemeIcon name="calendar" :size="24" :alt="t('app.nombre')" />
     </template>
 
-    <!-- El estado y el botón de actualizar, junto a los botones de la ventana,
-         que es donde están en el resto de las aplicaciones. El hueco que los
-         empujaba hasta ahí —un `span` con `flex-1`— lo pone la barra sola. -->
+    <!-- El estado y el botón de actualizar, junto a los botones de la ventana. -->
     <template #acciones>
-      <!-- El estado de carga se dice, no se insinúa con un icono girando: sin
-           esto, un servidor lento y un mes vacío se ven igual. -->
       <span v-if="cargando" class="text-tx-muted text-xs" role="status">
         {{ t('calendario.cargando') }}
       </span>
-      <!-- `ghost`, como los tres botones de la ventana que tiene al lado: los
-           cuatro son controles de la barra y se leen como un grupo. -->
       <ActionButton
         variant="ghost"
         label=""
@@ -129,42 +139,27 @@ onMounted(async () => {
         @click="refresh()" />
     </template>
 
-    <!-- **Centrado en el hueco que queda**, no en la ventana entera. Va en el
-         contenido de la barra —la única ranura que crece— con `m-auto`, que en
-         un contenedor flexible reparte lo que sobra a los dos lados. Estaba en
-         `centro`, que centra respecto de la ventana: con el icono de un lado y
-         el estado, el botón de actualizar y los tres controles del otro, el
-         medio de la ventana no es el medio del hueco, y el grupo quedaba
-         corrido a la derecha con la mitad izquierda de la barra vacía.
-
-         `m-auto` y no `mx-auto` porque la barra también puede ir a un costado:
-         ahí el eje del hueco es el vertical, y el margen automático en los dos
-         ejes centra en el que corresponda sin preguntar cuál es.
-
-         El mes y «Hoy» van dentro del mismo envoltorio, así que lo que se
-         centra es el conjunto: son una sola cosa para el ojo, y centrar el mes
-         solo dejaría al botón colgando de un lado. -->
+    <!-- El título del período entre sus flechas, centrado en el hueco de la
+         barra. Con la ventana angosta no hay lugar ni para el título: se muda a
+         la tira de arriba de la vista (ver abajo) y la barra se queda con el
+         icono, actualizar y los tres controles de la ventana. -->
     <template #barra="{ narrow }">
-      <!-- Con la ventana angosta la barra no tiene lugar ni para el título: a
-           240 px el mes y sus flechas desaparecían y «Hoy» quedaba encima de la
-           flecha. Ahí se mudan a la tira de arriba del mes, y la barra se queda
-           con el icono, actualizar y los tres botones de la ventana. -->
       <div v-if="!narrow" class="m-auto flex min-w-0 items-center gap-2">
-        <MonthNavigation :title="title" @previous="mesAnterior()" @next="mesSiguiente()" />
-
-        <!-- `shrink-0`: en una barra angosta cede el título del mes, que se
-             recorta, y no «Hoy», que partido en letras no se lee. -->
+        <MonthNavigation
+          :title="title"
+          v-bind="navLabels"
+          @previous="goPrevious()"
+          @next="goNext()" />
         <ActionButton
           variant="secondary"
           size="sm"
           class="shrink-0"
           :label="t('calendario.hoy')"
-          @click="goToToday()" />
+          @click="onToday()" />
       </div>
     </template>
 
-    <!-- Las secciones separadas por aire y no por líneas: cada una es una
-         superficie redondeada, como los paneles del escritorio. -->
+    <!-- Las secciones separadas por aire: cada una es una superficie redondeada. -->
     <AccountsPanel
       :class="paneClass('accounts', pane)"
       :accounts="cuentas"
@@ -179,20 +174,23 @@ onMounted(async () => {
       @choose-zone="elegirZona"
       @forward="go('month')" />
 
-    <!-- El mes con su botón para ir a las cuentas, que sólo existe con la
-         ventana angosta. Con la ventana ancha el envoltorio no se nota: la
-         cuadrícula lo llena entero, como antes. -->
+    <!-- La columna principal: el selector de vista arriba, y debajo la vista
+         elegida. Con la ventana ancha el envoltorio no se nota; con la angosta
+         lleva además la tira con el botón de las cuentas, «Hoy» y el período. -->
     <div
       data-pane="month"
       class="flex min-h-0 min-w-0 flex-1 flex-col gap-1"
       :class="paneClass('month', pane)">
+      <!-- El selector de vista, con cualquier ancho. -->
+      <div class="shrink-0">
+        <ViewSwitcher :model-value="view" @change="setView" />
+      </div>
+
       <!-- La tira de la ventana angosta: el botón de las cuentas, «Hoy» y el
-           mes entre sus flechas, que en la barra ya no entran. En dos renglones
-           mientras la fila no da para uno —a 240 px el título se cortaría—, y
-           en uno desde 22 rem, con el mes en el medio como en la barra. -->
+           período entre sus flechas, que en la barra ya no entran. En dos
+           renglones mientras la fila no da para uno, y en uno desde 22 rem. -->
       <div class="@container/strip shrink-0" :class="NARROW_ONLY">
-        <div
-          class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1">
+        <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1">
           <div class="col-start-1 row-start-1 flex" data-nav="month">
             <ActionButton
               variant="ghost"
@@ -207,24 +205,46 @@ onMounted(async () => {
             size="sm"
             class="col-start-3 row-start-1"
             :label="t('calendario.hoy')"
-            @click="goToToday()" />
+            @click="onToday()" />
           <MonthNavigation
             fluid
+            v-bind="navLabels"
             class="col-span-3 row-start-2 @min-[22rem]/strip:col-span-1 @min-[22rem]/strip:col-start-2 @min-[22rem]/strip:row-start-1"
             :title="title"
-            @previous="mesAnterior()"
-            @next="mesSiguiente()" />
+            @previous="goPrevious()"
+            @next="goNext()" />
         </div>
       </div>
-      <!-- Las dos vistas del mismo mes, montadas siempre y una sola visible
-           según el ancho de la fila: la cuadrícula con la ventana ancha, la
-           agenda con la angosta, donde siete columnas de 30 px cortaban los
-           eventos a una hora sin título. Al cambiar el ancho se ve el mismo
-           mes, porque las dos leen de lo mismo. -->
-      <MonthGrid :class="WIDE_ONLY" :days="dias" :zone="zona" :events-of="eventsOf" />
+
+      <!-- La vista elegida. El mes muestra la cuadrícula con la ventana ancha y
+           la agenda con la angosta (siete columnas de 30 px cortan los eventos);
+           las demás vistas se acomodan solas a cualquier ancho. -->
+      <template v-if="view === 'month'">
+        <MonthGrid :class="WIDE_ONLY" :days="dias" :zone="zona" :events-of="eventsOf" />
+        <MonthAgenda
+          ref="monthAgenda"
+          :class="NARROW_ONLY"
+          :days="dias"
+          :zone="zona"
+          :events-of="eventsOf" />
+      </template>
+      <ColumnsView
+        v-else-if="view === 'day' || view === 'days' || view === 'week'"
+        :days="dias"
+        :zone="zona"
+        :events-of="eventsOf" />
+      <YearView
+        v-else-if="view === 'year'"
+        :year="yearNumber"
+        :zone="zona"
+        :events-of="eventsOf"
+        @select-day="(fecha) => show(fecha, 'day')"
+        @select-month="(fecha) => show(fecha, 'month')" />
+      <!-- La agenda como vista propia es la misma lista del mes angosto
+           (`MonthAgenda`), ahora con cualquier ancho. -->
       <MonthAgenda
-        ref="agenda"
-        :class="NARROW_ONLY"
+        v-else
+        ref="agendaView"
         :days="dias"
         :zone="zona"
         :events-of="eventsOf" />
