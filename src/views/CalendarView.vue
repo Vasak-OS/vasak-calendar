@@ -26,6 +26,8 @@ const {
 	eventsOf,
 	cargar,
 	refresh,
+	syncStatuses,
+	refreshFailures,
 	mesAnterior,
 	mesSiguiente,
 	irAHoy,
@@ -168,6 +170,8 @@ onMounted(async () => {
       :accounts="cuentas"
       :calendars="calendarios"
       :notices="avisos"
+      :sync-statuses="syncStatuses"
+      :refresh-failures="refreshFailures"
       :zone="zona"
       :chosen-zone="zonaElegida"
       :system-zone="zonaDelSistema"
