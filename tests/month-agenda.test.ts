@@ -43,6 +43,7 @@ import { NARROW_ONLY, PANE_SHOWN, WIDE_ONLY } from '@/tools/narrow-layout';
 import { zonaDeLaSesion } from '@/tools/zona';
 import CalendarView from '@/views/CalendarView.vue';
 import { olvidarTodo, setAnswer } from './dobles';
+import { calendarEvent as event } from './fixtures/events';
 
 let mounted: VueWrapper | null = null;
 const realOffsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
@@ -59,22 +60,6 @@ afterEach(() => {
 		// Sin almacenamiento no hay nada que limpiar.
 	}
 });
-
-function event(extra: Partial<CalendarEvent> = {}): CalendarEvent {
-	return {
-		uid: 'uno',
-		title: 'Reunión',
-		start: '2026-09-15T14:00:00Z',
-		end: '2026-09-15T15:00:00Z',
-		all_day: false,
-		recurring: false,
-		shown_once: false,
-		zone: '',
-		calendar: 'https://nube.ejemplo.com/personal/',
-		color: '#e66100',
-		...extra,
-	};
-}
 
 /** Septiembre de 2026 en UTC, con «hoy» el 20. */
 const SEPTEMBER = cuadricula(

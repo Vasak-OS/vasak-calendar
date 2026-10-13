@@ -25,6 +25,8 @@ calendario:
   viendoEn: "Showing {0} time"
   masEventosOne: "+{0} more event"
   masEventosOther: "+{0} more events"
+  sinEventos: No events
+  conEventos: "{0}, has events"
 cuentas:
   titulo: Accounts
   calendarios: Calendars
@@ -45,9 +47,20 @@ sync:
     too_soon: Just refreshed; you can refresh again in a moment
     unavailable: The sync service is not running
     failed: Could not request a sync
+# The view switcher: day, N days, week, month, year and agenda.
+view:
+  label: View
+  day: Day
+  days: "{0} days"
+  week: Week
+  month: Month
+  year: Year
+  agenda: Agenda
 nav:
   accounts: Accounts
   month: Month
+  previous: Previous
+  next: Next
 # The month as a list, with a narrow window.
 agenda:
   today: "Today · {0}"

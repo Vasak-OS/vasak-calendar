@@ -37,6 +37,8 @@ calendario:
   viendoEn: "Viendo la hora de {0}"
   masEventosOne: "+{0} evento más"
   masEventosOther: "+{0} eventos más"
+  sinEventos: Sin eventos
+  conEventos: "{0}, con eventos"
 cuentas:
   titulo: Cuentas
   calendarios: Calendarios
@@ -57,10 +59,23 @@ sync:
     too_soon: Se acaba de actualizar; en un momento se puede de nuevo
     unavailable: El servicio de sincronización no está funcionando
     failed: No se pudo pedir la sincronización
-# Los botones de ir y volver entre columnas, con la ventana angosta.
+# El selector de vista: día, N días, semana, mes, año y agenda.
+view:
+  label: Vista
+  day: Día
+  # `t()` no interpola: el marcador se reemplaza a mano. Ver el README.
+  days: "{0} días"
+  week: Semana
+  month: Mes
+  year: Año
+  agenda: Agenda
+# Los botones de ir y volver entre columnas (con la ventana angosta) y entre
+# períodos (las flechas, cuando la vista no es el mes).
 nav:
   accounts: Cuentas
   month: Mes
+  previous: Anterior
+  next: Siguiente
 # El mes como lista, con la ventana angosta.
 agenda:
   today: "Hoy · {0}"
