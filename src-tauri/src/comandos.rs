@@ -118,8 +118,14 @@ pub async fn store_events(from: String, to: String) -> Result<StoreReading, Stri
 
 /// El botón «Actualizar»: pide al sincronizador que traiga ya lo nuevo.
 #[tauri::command]
-pub async fn request_sync(account_ids: Vec<String>) {
+pub async fn request_sync(account_ids: Vec<String>) -> Vec<store::SyncRequestFailure> {
     store::request_sync(&account_ids).await
+}
+
+/// El estado de la sincronización del calendario de cada cuenta.
+#[tauri::command]
+pub async fn sync_status() -> Result<Vec<store::AccountSyncStatus>, String> {
+    store::sync_status().await
 }
 
 /// Lee el rango que mandó la ventana.

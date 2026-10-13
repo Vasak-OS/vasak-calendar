@@ -9,6 +9,7 @@ import {
 	rangoDe,
 	sumarMeses,
 } from '@/tools/mes';
+import type { AccountSyncStatus, SyncRequestFailure } from '@/tools/sync-status';
 import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
 
 /** Dónde se recuerda en qué zona se quiere ver la agenda. */
@@ -60,6 +61,9 @@ interface StoreReading extends LecturaDeCuenta {
 	/** Si el almacén tiene calendarios. Si no, se lee cuenta por cuenta. */
 	available: boolean;
 }
+
+/** El aviso del programa de que cambió el estado de la sincronización. */
+const SYNC_STATUS_EVENT = 'calendar-sync-status';
 
 /** El aviso del programa de que cambió lo guardado del calendario. */
 const STORE_CHANGED_EVENT = 'calendar-changed';
@@ -255,13 +259,39 @@ export function useCalendario() {
 	 * cada cuenta, y relee lo que hay mientras tanto. Lo que llegue después se
 	 * avisa con [`STORE_CHANGED_EVENT`].
 	 */
-	async function refresh() {
+	/** El estado de la sincronización de cada cuenta, del almacén. */
+	const syncStatuses = ref<AccountSyncStatus[]>([]);
+	/** Las cuentas a las que el último «Actualizar» no les pudo pedir una vuelta. */
+	const refreshFailures = ref<SyncRequestFailure[]>([]);
+
+	/**
+	 * Lee el estado de la sincronización. Si no se puede, se deja el que había:
+	 * no saber el estado no es un error que haya que mostrar encima del mes.
+	 */
+	async function loadSyncStatus() {
 		try {
-			await invoke('request_sync', { accountIds: cuentas.value.map((c) => c.id) });
+			const statuses = await invoke<AccountSyncStatus[]>('sync_status');
+			syncStatuses.value = Array.isArray(statuses) ? statuses : [];
+		} catch (e) {
+			console.error('no se pudo leer el estado de la sincronización', e);
+		}
+	}
+
+	async function refresh() {
+		// Las que hay que reconectar no: el sincronizador no puede con ellas
+		// hasta que la persona lo haga desde Configuración.
+		const accountIds = cuentas.value.filter((c) => !c.necesita_reconectarse).map((c) => c.id);
+		try {
+			const failures = await invoke<SyncRequestFailure[]>('request_sync', { accountIds });
+			refreshFailures.value = Array.isArray(failures) ? failures : [];
 		} catch (e) {
 			console.error('no se pudo pedir una vuelta al sincronizador', e);
+			refreshFailures.value = accountIds.map((account_id) => ({
+				account_id,
+				reason: 'unavailable' as const,
+			}));
 		}
-		await cargar();
+		await Promise.all([loadSyncStatus(), cargar()]);
 	}
 
 	async function irA(nuevo: Date) {
@@ -317,6 +347,25 @@ export function useCalendario() {
 			console.error('no se pudo escuchar el cambio de zona horaria', e);
 		});
 
+	// El estado de la sincronización, cada vez que cambia. Un «se pidió hace un
+	// momento» deja de valer en cuanto hay una vuelta en marcha.
+	let stopWatchingStatus: UnlistenFn | null = null;
+	void loadSyncStatus();
+	listen(SYNC_STATUS_EVENT, () => {
+		refreshFailures.value = refreshFailures.value.filter((f) => f.reason !== 'too_soon');
+		void loadSyncStatus();
+	})
+		.then((cancelar) => {
+			if (descartado) {
+				cancelar();
+				return;
+			}
+			stopWatchingStatus = cancelar;
+		})
+		.catch((e) => {
+			console.error('no se pudo escuchar el estado de la sincronización', e);
+		});
+
 	// Lo nuevo que trae el sincronizador en segundo plano: se relee el mes a
 	// la vista. Sin preguntar a intervalos.
 	let stopWatchingStore: UnlistenFn | null = null;
@@ -362,6 +411,7 @@ export function useCalendario() {
 		window.removeEventListener('focus', alVolver);
 		dejarDeEscuchar?.();
 		stopWatchingStore?.();
+		stopWatchingStatus?.();
 	});
 
 	return {
@@ -380,6 +430,8 @@ export function useCalendario() {
 		eventsOf,
 		cargar,
 		refresh,
+		syncStatuses,
+		refreshFailures,
 		mesAnterior,
 		mesSiguiente,
 		irAHoy,

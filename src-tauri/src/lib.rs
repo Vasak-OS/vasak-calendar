@@ -42,6 +42,7 @@ pub fn run() {
             comandos::account_events,
             comandos::store_events,
             comandos::request_sync,
+            comandos::sync_status,
             reloj::zona_del_sistema,
         ])
         // El aviso de que la máquina cambió de huso. Va acá y no en la ventana

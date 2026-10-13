@@ -10,9 +10,16 @@ import {
 } from '@vasakgroup/vue-libvasak';
 import TimeZonePicker from '@/components/calendar/TimeZonePicker.vue';
 import type { Calendario, Cuenta } from '@/composables/use-calendario';
+import { interpolar } from '@/tools/interpolar';
 import { NARROW_ONLY } from '@/tools/narrow-layout';
+import {
+	type AccountSyncStatus,
+	type SyncLine,
+	type SyncRequestFailure,
+	syncLine,
+} from '@/tools/sync-status';
 
-defineProps<{
+const props = defineProps<{
 	accounts: Cuenta[];
 	calendars: Calendario[];
 	notices: string[];
@@ -20,6 +27,8 @@ defineProps<{
 	chosenZone: string;
 	systemZone: string;
 	foreignZone: boolean;
+	syncStatuses?: AccountSyncStatus[];
+	refreshFailures?: SyncRequestFailure[];
 }>();
 
 const emit = defineEmits<{
@@ -29,6 +38,18 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+/** La línea de sincronización de una cuenta, o `null` si no hay nada que decir. */
+function lineOf(accountId: string): SyncLine | null {
+	return syncLine(
+		props.syncStatuses?.find((s) => s.account_id === accountId),
+		props.refreshFailures?.find((f) => f.account_id === accountId)
+	);
+}
+
+function textOf(line: SyncLine): string {
+	return interpolar(t(line.key), line.arg);
+}
 </script>
 
 <template>
@@ -88,6 +109,20 @@ const { t } = useI18n();
               <StatusDot tone="warning" class="mt-1" />
               <span class="min-w-0 break-words">{{ t('cuentas.necesitaReconectarse') }}</span>
             </span>
+            <!-- Cómo va la sincronización: el mes sale de lo que ya está en el
+                 sistema, y sin esta línea no habría forma de saber si está al
+                 día, si se está trayendo o si algo falló. Mismo criterio que
+                 el aviso de reconectar: el punto lleva el tono y el texto va
+                 atenuado. -->
+            <template v-else-if="lineOf(account.id)">
+              <span
+                class="flex items-start gap-1.5 text-tx-muted text-xs"
+                data-testid="sync-status"
+                role="status">
+                <StatusDot :tone="lineOf(account.id)!.tone" :pulse="lineOf(account.id)!.pulse" class="mt-1" />
+                <span class="min-w-0 break-words">{{ textOf(lineOf(account.id)!) }}</span>
+              </span>
+            </template>
           </li>
         </ul>
       </section>
