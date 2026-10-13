@@ -221,3 +221,17 @@ export function periodTitle(
 
 /** Los eventos de un día ya repartidos, para una vista que recibe la función. */
 export type EventsOf = (clave: string) => CalendarEvent[];
+
+/**
+ * Lo que recibe una vista que dibuja un rango de días: la cuadrícula del mes,
+ * la agenda y las columnas de día lo comparten, así que su forma vive una sola
+ * vez acá en vez de repetirse en cada componente.
+ */
+export interface DayRangeProps {
+	/** Los días que la vista muestra. */
+	days: Dia[];
+	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
+	zone: string;
+	/** Los eventos de un día, ya repartidos. */
+	eventsOf: EventsOf;
+}

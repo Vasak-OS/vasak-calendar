@@ -3,7 +3,6 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
-import AgendaView from '@/components/calendar/AgendaView.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
 import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
@@ -81,9 +80,13 @@ async function go(next: Pane) {
 	target?.focus();
 }
 
-/** Las dos listas que se pueden llevar al día de hoy. Sólo una existe por vez. */
+/**
+ * Las listas que se pueden llevar al día de hoy: el mes como agenda —con la
+ * ventana angosta— y la vista de agenda. Las dos son `MonthAgenda`, y sólo una
+ * existe por vez según la vista.
+ */
 const monthAgenda = ref<InstanceType<typeof MonthAgenda> | null>(null);
-const agendaView = ref<InstanceType<typeof AgendaView> | null>(null);
+const agendaView = ref<InstanceType<typeof MonthAgenda> | null>(null);
 
 /** Lleva la lista al día de hoy, en las vistas que son una lista. */
 function scrollListToToday() {
@@ -237,7 +240,9 @@ onMounted(async () => {
         :events-of="eventsOf"
         @select-day="(fecha) => show(fecha, 'day')"
         @select-month="(fecha) => show(fecha, 'month')" />
-      <AgendaView
+      <!-- La agenda como vista propia es la misma lista del mes angosto
+           (`MonthAgenda`), ahora con cualquier ancho. -->
+      <MonthAgenda
         v-else
         ref="agendaView"
         :days="dias"

@@ -1,16 +1,13 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { Panel, ThemeIcon } from '@vasakgroup/vue-libvasak';
+import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
+import EventMarks from '@/components/calendar/EventMarks.vue';
 import { claveSegunCantidad, interpolar } from '@/tools/interpolar';
 import type { CalendarEvent, Dia } from '@/tools/mes';
+import type { DayRangeProps } from '@/tools/views';
 
-const props = defineProps<{
-	days: Dia[];
-	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
-	zone: string;
-	eventsOf: (clave: string) => CalendarEvent[];
-}>();
+const props = defineProps<DayRangeProps>();
 
 const { t, locale } = useI18n();
 
@@ -113,16 +110,6 @@ function descriptionOf(event: CalendarEvent): string {
  */
 function foreignZoneOf(event: CalendarEvent): string {
 	return event.zone && event.zone !== props.zone ? event.zone : '';
-}
-
-/**
- * Lo que dice la marca de repetición: «se repite», o, si la serie no se pudo
- * expandir, además que se muestra sólo el día que empieza.
- */
-function recurrenceNoteOf(event: CalendarEvent): string {
-	return event.shown_once
-		? `${t('calendario.recurring')} — ${t('calendario.shownOnce')}`
-		: t('calendario.recurring');
 }
 
 function overflowSummary(count: number): string {
@@ -238,30 +225,10 @@ function overflowSummary(count: number): string {
                   {{ event.all_day ? '' : timeOf(event) }}
                 </span>
                 <span class="truncate" aria-hidden="true">{{ titleOf(event) }}</span>
-                <!-- Las dos marcas son iconos del tema y no caracteres: 🌐 y ↻
-                     salían de la fuente que hubiera, con su propio color y
-                     tamaño, y el globo en color en medio de una fila de texto. -->
-                <span
-                  v-if="foreignZoneOf(event)"
-                  class="flex shrink-0 text-tx-muted"
-                  :title="interpolar(t('calendario.escritoEn'), foreignZoneOf(event))"
-                  aria-hidden="true"
-                  data-testid="foreign-zone-mark">
-                  <ThemeIcon name="preferences-system-time" type="symbol" :size="12" alt="" />
-                </span>
-                <!-- Una serie que no se pudo expandir se muestra sólo el día que
-                     empieza, y eso se dice: sin la marca, una reunión semanal
-                     parece única y las demás semanas parecen libres. Las que sí
-                     se expandieron llevan la marca común de «se repite». -->
-                <span
-                  v-if="event.recurring"
-                  class="flex shrink-0 text-tx-muted"
-                  role="img"
-                  :title="recurrenceNoteOf(event)"
-                  :aria-label="recurrenceNoteOf(event)"
-                  data-testid="recurrence-mark">
-                  <ThemeIcon name="media-playlist-repeat" type="symbol" :size="12" alt="" />
-                </span>
+                <!-- Las marcas de otra zona y de repetición, la misma pieza que
+                     la agenda y las columnas (`EventMarks`), en el tamaño chico
+                     de la celda. -->
+                <EventMarks :event="event" :zone="zone" :size="12" />
               </li>
               <li v-if="overflowOf(day) > 0" class="break-words px-1 text-tx-muted text-xs">
                 {{ overflowSummary(overflowOf(day)) }}

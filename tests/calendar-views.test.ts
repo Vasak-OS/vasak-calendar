@@ -19,9 +19,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { SegmentedControl } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { type EffectScope, effectScope, nextTick } from 'vue';
-import AgendaView from '@/components/calendar/AgendaView.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
 import DayEvents from '@/components/calendar/DayEvents.vue';
+import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import ViewSwitcher from '@/components/calendar/ViewSwitcher.vue';
 import YearView from '@/components/calendar/YearView.vue';
@@ -29,7 +29,8 @@ import { useCalendario } from '@/composables/use-calendario';
 import { type CalendarEvent, eventsByDay } from '@/tools/mes';
 import { CALENDAR_VIEWS, viewDays } from '@/tools/views';
 import CalendarView from '@/views/CalendarView.vue';
-import { invocations, olvidarTodo, setAnswer } from './dobles';
+import { olvidarTodo, invocations, setAnswer } from './dobles';
+import { calendarEvent as event } from './fixtures/events';
 
 let mounted: VueWrapper | null = null;
 let scope: EffectScope | null = null;
@@ -48,26 +49,16 @@ afterEach(() => {
 	}
 });
 
-function event(extra: Partial<CalendarEvent> = {}): CalendarEvent {
-	return {
-		uid: 'uno',
-		title: 'Reunión',
-		start: '2026-10-15T14:00:00Z',
-		end: '2026-10-15T15:00:00Z',
-		all_day: false,
-		recurring: false,
-		shown_once: false,
-		zone: '',
-		calendar: 'https://nube.ejemplo.com/personal/',
-		color: '#e66100',
-		...extra,
-	};
-}
-
 /** `eventsOf` de un rango de días dado, como lo arma el composable. */
 function eventsOfFor(days: ReturnType<typeof viewDays>, events: CalendarEvent[]) {
 	const byDay = eventsByDay(events, days, 'UTC');
 	return (clave: string) => byDay.get(clave) ?? [];
+}
+
+/** El almacén disponible y sin cuentas: lo mínimo para montar la ventana. */
+function seedStore() {
+	setAnswer('listar_cuentas', []);
+	setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: true });
 }
 
 const ANCHOR = new Date('2026-10-15T00:00:00Z');
@@ -160,13 +151,15 @@ describe('la vista de año', () => {
 });
 
 describe('la agenda como vista', () => {
+	// La vista de agenda es la misma lista del mes angosto (`MonthAgenda`), ahora
+	// con cualquier ancho: así no hay dos copias del andamiaje de la lista.
 	test('lista los días del rango que tienen algo, con sus eventos', () => {
 		const days = viewDays('agenda', ANCHOR, 'UTC', FAR);
 		const events = [
 			event({ uid: 'a', title: 'Médico', start: '2026-10-05T09:00:00Z', end: '2026-10-05T10:00:00Z' }),
 			event({ uid: 'b', title: 'Cena', start: '2026-10-20T20:00:00Z', end: '2026-10-20T22:00:00Z' }),
 		];
-		mounted = mount(AgendaView, {
+		mounted = mount(MonthAgenda, {
 			props: { days, zone: 'UTC', eventsOf: eventsOfFor(days, events) },
 		});
 
@@ -179,7 +172,7 @@ describe('la agenda como vista', () => {
 
 	test('un rango sin nada muestra el vacío', () => {
 		const days = viewDays('agenda', ANCHOR, 'UTC', FAR);
-		mounted = mount(AgendaView, {
+		mounted = mount(MonthAgenda, {
 			props: { days, zone: 'UTC', eventsOf: eventsOfFor(days, []) },
 		});
 
@@ -190,8 +183,7 @@ describe('la agenda como vista', () => {
 
 describe('el selector cambia de vista', () => {
 	function open() {
-		setAnswer('listar_cuentas', []);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: true });
+		seedStore();
 		mounted = mount(CalendarView, { attachTo: document.body });
 		return mounted;
 	}
@@ -216,7 +208,7 @@ describe('el selector cambia de vista', () => {
 		for (const [view, component] of [
 			['week', ColumnsView],
 			['year', YearView],
-			['agenda', AgendaView],
+			['agenda', MonthAgenda],
 			['day', ColumnsView],
 		] as const) {
 			wrapper.findComponent(ViewSwitcher).vm.$emit('change', view);
@@ -236,8 +228,7 @@ describe('el composable le pide a cada vista su rango', () => {
 	}
 
 	test('cada vista mira la cantidad de días que le toca', async () => {
-		setAnswer('listar_cuentas', []);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: true });
+		seedStore();
 		const api = calendar();
 		await flush();
 
@@ -255,8 +246,7 @@ describe('el composable le pide a cada vista su rango', () => {
 	});
 
 	test('cambiar de vista vuelve a pedirle al almacén', async () => {
-		setAnswer('listar_cuentas', []);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: true });
+		seedStore();
 		const api = calendar();
 		await flush();
 
@@ -267,8 +257,7 @@ describe('el composable le pide a cada vista su rango', () => {
 	});
 
 	test('la vista elegida se recuerda para la próxima vez', async () => {
-		setAnswer('listar_cuentas', []);
-		setAnswer('store_events', { calendarios: [], eventos: [], fallos: [], available: true });
+		seedStore();
 		const first = calendar();
 		await flush();
 		await first.setView('week');

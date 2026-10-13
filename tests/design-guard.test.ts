@@ -64,7 +64,6 @@ const LIBRARY_TOKENS = `${ROOT}node_modules/@vasakgroup/vue-libvasak/dist/tokens
 const DATA_COLOR = [
 	'components/calendar/AccountsPanel.vue',
 	'components/calendar/MonthGrid.vue',
-	'components/calendar/MonthAgenda.vue',
 	'components/calendar/DayEvents.vue',
 ];
 

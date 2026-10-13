@@ -18,14 +18,9 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import DayEvents from '@/components/calendar/DayEvents.vue';
-import type { CalendarEvent, Dia } from '@/tools/mes';
+import type { DayRangeProps } from '@/tools/views';
 
-const props = defineProps<{
-	days: Dia[];
-	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
-	zone: string;
-	eventsOf: (clave: string) => CalendarEvent[];
-}>();
+const props = defineProps<DayRangeProps>();
 
 const { locale } = useI18n();
 

@@ -3,30 +3,39 @@
  * Los eventos de **un** día, como lista, con la hora entera y en la zona de la
  * agenda.
  *
- * Es la pieza común de las vistas que muestran horas —día, N días, semana y la
- * agenda—: así todas dicen la hora igual, y la hora la calcula `eventSpanOn`
- * (`tools/agenda.ts`), que ya resuelve lo que se equivoca en silencio —qué hora
- * decir de algo que no empieza ni termina ese día, una guardia de las 22 a las
- * 6—. No se usa el `EventList` de la librería acá porque no mira `timeZone`: con
- * una zona ajena elegida diría las horas con el reloj del sistema, que es justo
- * lo que esta aplicación existe para no hacer.
+ * Es la pieza común de todo lo que muestra los eventos de un día —la agenda del
+ * mes, la agenda como vista, y las columnas de día, N días y semana—: así todas
+ * dicen la hora igual, con `eventSpanOn` (`tools/agenda.ts`), que ya resuelve lo
+ * que se equivoca en silencio (qué hora decir de algo que no empieza ni termina
+ * ese día, una guardia de las 22 a las 6). No se usa el `EventList` de la
+ * librería acá porque no mira `timeZone`: con una zona ajena elegida diría las
+ * horas con el reloj del sistema, que es justo lo que esta app existe para no
+ * hacer.
  */
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { EmptyState, ListGroup, ListRow, StatusDot, ThemeIcon } from '@vasakgroup/vue-libvasak';
+import { ListGroup, ListRow, StatusDot } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
+import EventMarks from '@/components/calendar/EventMarks.vue';
 import { eventSpanOn } from '@/tools/agenda';
 import { interpolar } from '@/tools/interpolar';
 import type { CalendarEvent } from '@/tools/mes';
 
-const props = defineProps<{
-	events: CalendarEvent[];
-	/** El día que se está mostrando, `AAAA-MM-DD`: lo que decide qué hora decir. */
-	dayKey: string;
-	/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
-	zone: string;
-}>();
+const props = withDefaults(
+	defineProps<{
+		events: CalendarEvent[];
+		/** El día que se muestra, `AAAA-MM-DD`: lo que decide qué hora decir. */
+		dayKey: string;
+		/** En qué zona se está mirando la agenda. Todo lo que dice una hora la usa. */
+		zone: string;
+		/** Qué decir cuando el día no tiene nada. */
+		emptyLabel?: string;
+	}>(),
+	{ emptyLabel: undefined }
+);
 
 const { t, locale } = useI18n();
+
+const emptyText = computed(() => props.emptyLabel ?? t('calendario.sinEventos'));
 
 const timeFormat = computed(
 	() =>
@@ -59,25 +68,14 @@ function timeOf(event: CalendarEvent): string {
 	}
 }
 
-/** En qué zona lo escribieron, si no es la misma en la que se está mirando. */
-function foreignZoneOf(event: CalendarEvent): string {
-	return event.zone && event.zone !== props.zone ? event.zone : '';
-}
-
-function recurrenceNoteOf(event: CalendarEvent): string {
-	return event.shown_once
-		? `${t('calendario.recurring')} — ${t('calendario.shownOnce')}`
-		: t('calendario.recurring');
+function hasMarks(event: CalendarEvent): boolean {
+	return event.recurring || (!!event.zone && event.zone !== props.zone);
 }
 </script>
 
 <template>
-  <EmptyState
-    v-if="events.length === 0"
-    icon="x-office-calendar"
-    size="sm"
-    :title="t('calendario.sinEventos')" />
-  <ListGroup v-else>
+  <ListGroup>
+    <ListRow v-if="events.length === 0" :title="emptyText" />
     <ListRow
       v-for="event in events"
       :key="`${event.uid}-${event.start}`"
@@ -90,25 +88,8 @@ function recurrenceNoteOf(event: CalendarEvent): string {
       <template #leading>
         <StatusDot size="md" tone="accent" :color="event.color ?? undefined" />
       </template>
-      <template v-if="foreignZoneOf(event) || event.recurring" #trailing>
-        <span
-          v-if="foreignZoneOf(event)"
-          class="flex text-tx-muted"
-          role="img"
-          :title="interpolar(t('calendario.escritoEn'), foreignZoneOf(event))"
-          :aria-label="interpolar(t('calendario.escritoEn'), foreignZoneOf(event))"
-          data-testid="foreign-zone-mark">
-          <ThemeIcon name="preferences-system-time" type="symbol" :size="16" alt="" />
-        </span>
-        <span
-          v-if="event.recurring"
-          class="flex text-tx-muted"
-          role="img"
-          :title="recurrenceNoteOf(event)"
-          :aria-label="recurrenceNoteOf(event)"
-          data-testid="recurrence-mark">
-          <ThemeIcon name="media-playlist-repeat" type="symbol" :size="16" alt="" />
-        </span>
+      <template v-if="hasMarks(event)" #trailing>
+        <EventMarks :event="event" :zone="zone" :size="16" />
       </template>
     </ListRow>
   </ListGroup>
