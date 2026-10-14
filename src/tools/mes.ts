@@ -18,6 +18,7 @@
  * siempre contestan en la zona del sistema. El puente está en `zona.ts`.
  */
 
+import { canEdit } from '@/tools/sync-state';
 import {
 	type Civil,
 	civilDe,
@@ -28,6 +29,13 @@ import {
 	primeroDeMesCivil,
 	sumarDiasCivil,
 } from '@/tools/zona';
+
+// El estado de sincronización es común entre un evento y una tarea, así que vive
+// en `tools/sync-state.ts`. Se reexporta con los nombres de siempre para que lo
+// que ya importaba `isPending`/`isConflict`/`canEditEvent` de acá no cambie.
+export { isConflict, isPending } from '@/tools/sync-state';
+/** Si un evento se puede editar: tiene un ETag con el que pedir la precondición. */
+export const canEditEvent = canEdit;
 
 /** Cuántos días trae una semana. Nombrado para que la aritmética se lea. */
 const DIAS_POR_SEMANA = 7;
@@ -126,21 +134,6 @@ export interface CalendarEvent {
 	 * siempre `synced`. Ausente en lecturas viejas, que se tratan como `synced`.
 	 */
 	sync_state?: string;
-}
-
-/** Si un evento está sin sincronizar: cambiado en local, todavía no en el servidor. */
-export function isPending(event: CalendarEvent): boolean {
-	return event.sync_state === 'pending';
-}
-
-/** Si un evento chocó con el servidor y espera que la persona lo resuelva. */
-export function isConflict(event: CalendarEvent): boolean {
-	return event.sync_state === 'conflict';
-}
-
-/** Si un evento se puede editar: tiene un ETag con el que pedir la precondición. */
-export function canEditEvent(event: CalendarEvent | null | undefined): boolean {
-	return !!event?.etag;
 }
 
 /** Las 42 celdas del mes que contiene `referencia`, en la zona de la agenda. */

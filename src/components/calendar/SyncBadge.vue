@@ -1,12 +1,15 @@
 <script lang="ts" setup>
 /**
- * El indicador de sincronización de un evento: «sin sincronizar» cuando el
- * cambio local todavía no llegó al servidor, «en conflicto» cuando chocó con él.
+ * El indicador de sincronización de un objeto del almacén: «sin sincronizar»
+ * cuando el cambio local todavía no llegó al servidor, «en conflicto» cuando
+ * chocó con él.
  *
  * Es el `Badge` de `vue-libvasak` —estilo Once UI, colores del esquema por el
- * tono—, en un solo lugar porque lo muestran la cuadrícula del mes, la agenda y
- * las columnas: una copia por vista terminaría diciendo cada una una cosa. Un
- * evento al día (`synced`, o sin estado) no dibuja nada.
+ * tono—, en un solo lugar porque lo muestran la cuadrícula del mes, la agenda,
+ * las columnas y la lista de tareas: una copia por vista terminaría diciendo
+ * cada una una cosa. Mira sólo el `sync_state` (ver `tools/sync-state.ts`), así
+ * que sirve igual para un evento y para una tarea. Un objeto al día (`synced`, o
+ * sin estado) no dibuja nada.
  *
  * En la celda apretada del mes va `compact`: sólo el punto del tono, con el
  * texto en el globo del sistema; en una fila, con su texto al lado.
@@ -14,11 +17,12 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Badge } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
-import { type CalendarEvent, isConflict, isPending } from '@/tools/mes';
+import { isConflict, isPending, type SyncStatus } from '@/tools/sync-state';
 
 const props = withDefaults(
 	defineProps<{
-		event: CalendarEvent;
+		/** El objeto del que se mira el estado: un evento o una tarea. */
+		event: SyncStatus;
 		/** Sólo el punto, sin texto, para donde no hay lugar (la celda del mes). */
 		compact?: boolean;
 	}>(),

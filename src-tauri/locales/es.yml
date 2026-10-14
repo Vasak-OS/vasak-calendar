@@ -132,6 +132,9 @@ conflicto:
   # El aviso en el formulario de un evento en conflicto.
   tituloEvento: Este evento está en conflicto
   descripcionEvento: Tu versión y la del servidor no coinciden. Resolvelo para poder editarlo.
+  # El mismo aviso, en el formulario de una tarea en conflicto.
+  tituloTarea: Esta tarea está en conflicto
+  descripcionTarea: Tu versión y la del servidor no coinciden. Resolvela para poder editarla.
   resolver: Resolver
   ayuda: Elegí con cuál versión quedarte. La otra se descarta.
   local: Mi versión
@@ -149,3 +152,56 @@ conflicto:
   campoComienzo: Comienzo
   campoFin: Fin
   campoUbicacion: Ubicación
+# El selector de parte: el calendario o las tareas.
+modo:
+  label: Parte
+  calendario: Calendario
+  tareas: Tareas
+# La vista de tareas: la lista y el formulario de crear, editar y borrar.
+tareas:
+  crear: Agregar tarea
+  tituloCrear: Nueva tarea
+  tituloEditar: Tarea
+  titulo: Título
+  tituloPlaceholder: Nombre de la tarea
+  lista: Lista
+  estadoLabel: Estado
+  prioridadLabel: Prioridad
+  conVencimiento: Con vencimiento
+  todoElDia: Todo el día
+  vencimiento: Vencimiento
+  descripcion: Descripción
+  guardar: Guardar
+  cancelar: Cancelar
+  borrar: Borrar
+  borrarConfirmar: Sí, borrar
+  verCompletadas: Ver completadas
+  cargando: Buscando tareas…
+  completar: Marcar como hecha
+  sinTitulo: (sin título)
+  # Editar queda en pausa hasta que el almacén entregue el ETag de la tarea.
+  pendiente: "Esta tarea todavía no se puede editar: hay que esperar a que se sincronice."
+  # Cuando la tarea no tiene un identificador que permita editarla o borrarla.
+  noSePuede: No se pudo identificar la tarea.
+  faltaTitulo: Poné un título.
+  faltaCalendario: Elegí una lista.
+  fechaInvalida: Revisá el vencimiento.
+  # Cuando el almacén todavía no tiene ninguna lista de tareas.
+  sinListasTitulo: Todavía no hay ninguna lista de tareas
+  sinListasNota: Conectá una cuenta con tareas desde Configuración y aparecen acá.
+  # Cuando hay listas pero ninguna tarea.
+  vacioTitulo: No hay tareas
+  vacioNota: Agregá una con el botón de arriba.
+  vacioPendientesNota: No hay tareas pendientes. Prendé «Ver completadas» para ver las hechas.
+  # Los cuatro estados de una tarea.
+  estado:
+    NEEDS-ACTION: Pendiente
+    IN-PROCESS: En curso
+    COMPLETED: Completada
+    CANCELLED: Cancelada
+  # Las prioridades que se pueden elegir.
+  prioridad:
+    none: Sin prioridad
+    high: Alta
+    medium: Media
+    low: Baja

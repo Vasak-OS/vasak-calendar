@@ -206,6 +206,50 @@ pub async fn resolve_conflict<R: tauri::Runtime>(
     store::resolve_conflict(&app.store(), &account_id, &id, &choice).await
 }
 
+/// Las tareas (`VTODO`) de **todas** las cuentas, del almacén del sistema: ya
+/// sincronizadas, sin esperar a la red. `include_completed` decide si entran las
+/// terminadas. Con `available: false` el almacén todavía no tiene ninguna lista
+/// de tareas y la ventana muestra que no hay nada.
+#[tauri::command]
+pub async fn store_tasks<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    include_completed: bool,
+) -> Result<store::TaskReading, String> {
+    store::read_tasks(&app.store(), include_completed).await
+}
+
+/// Crea o edita una tarea en el almacén del sistema.
+///
+/// `if_match` vacío **crea** (el `payload` no lleva `id`); con un ETag **edita**
+/// la tarea cuyo `id` local va en el `payload`. Completar una tarea es editar con
+/// el parche que fija el estado y el porcentaje. Devuelve el id global de la tarea
+/// escrita.
+#[tauri::command]
+pub async fn put_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    calendar_id: String,
+    payload: String,
+    if_match: String,
+) -> Result<store::TaskWriteResult, String> {
+    store::put_task(&app.store(), &account_id, &calendar_id, &payload, &if_match).await
+}
+
+/// Borra una tarea del almacén del sistema.
+///
+/// `task_id` es el número local del objeto; `if_match` vacío borra sin
+/// precondición, con un ETag sólo si el recurso no cambió desde él. El almacén
+/// encola el borrado y avisa; la ventana relee con ese aviso.
+#[tauri::command]
+pub async fn delete_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    task_id: String,
+    if_match: String,
+) -> Result<(), String> {
+    store::delete_task(&app.store(), &account_id, &task_id, &if_match).await
+}
+
 /// Lee el rango que mandó la ventana.
 ///
 /// Se valida acá y no más adentro porque un rango dado vuelta —el fin antes que

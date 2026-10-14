@@ -116,6 +116,8 @@ conflicto:
   titulo: Resolve conflict
   tituloEvento: This event is in conflict
   descripcionEvento: Your version and the server's don't match. Resolve it to be able to edit it.
+  tituloTarea: This task is in conflict
+  descripcionTarea: Your version and the server's don't match. Resolve it to be able to edit it.
   resolver: Resolve
   ayuda: Choose which version to keep. The other one is discarded.
   local: My version
@@ -133,3 +135,56 @@ conflicto:
   campoComienzo: Start
   campoFin: End
   campoUbicacion: Location
+# The part switcher: the calendar or the tasks.
+modo:
+  label: Part
+  calendario: Calendar
+  tareas: Tasks
+# The tasks view: the list and the create, edit and delete form.
+tareas:
+  crear: Add task
+  tituloCrear: New task
+  tituloEditar: Task
+  titulo: Title
+  tituloPlaceholder: Task name
+  lista: List
+  estadoLabel: Status
+  prioridadLabel: Priority
+  conVencimiento: Has due date
+  todoElDia: All day
+  vencimiento: Due date
+  descripcion: Description
+  guardar: Save
+  cancelar: Cancel
+  borrar: Delete
+  borrarConfirmar: Yes, delete
+  verCompletadas: Show completed
+  cargando: Looking for tasks…
+  completar: Mark as done
+  sinTitulo: (no title)
+  # Editing is paused until the store exposes the task's ETag.
+  pendiente: "This task can't be edited yet: wait for it to sync."
+  # When the task has no id that would let it be edited or deleted.
+  noSePuede: The task could not be identified.
+  faltaTitulo: Enter a title.
+  faltaCalendario: Choose a list.
+  fechaInvalida: Check the due date.
+  # When the store has no task lists yet.
+  sinListasTitulo: There are no task lists yet
+  sinListasNota: Connect an account with tasks from Settings and they'll show up here.
+  # When there are lists but no tasks.
+  vacioTitulo: No tasks
+  vacioNota: Add one with the button above.
+  vacioPendientesNota: No pending tasks. Turn on "Show completed" to see the done ones.
+  # The four states of a task.
+  estado:
+    NEEDS-ACTION: Pending
+    IN-PROCESS: In progress
+    COMPLETED: Completed
+    CANCELLED: Cancelled
+  # The priorities that can be chosen.
+  prioridad:
+    none: No priority
+    high: High
+    medium: Medium
+    low: Low

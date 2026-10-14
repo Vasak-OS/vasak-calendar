@@ -1,7 +1,7 @@
 {
   "name": "vasak-calendar",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.20.0",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-shell": "^2.5.0",
     "@vasakgroup/plugin-config-manager": "^2.12.1",
     "@vasakgroup/plugin-vicons": "^2.2.2",

@@ -319,9 +319,214 @@ pub async fn delete_event(
     Ok(())
 }
 
+// ── Las tareas: listar, crear, editar y borrar ─────────────────────────────
+
+/// Una tarea (`VTODO`) tal como la lista `ListTasks` del almacén.
+///
+/// Los nombres son los de `TaskItem` en
+/// `vasak-accounts/sync/src/store/calendar_read.rs`, tal cual: Tauri no los
+/// convierte y uno que no coincide llega como `undefined` sin ningún error. El
+/// `etag` y el `sync_state` los sumó A-TASKDTO; un almacén de antes no los manda
+/// y quedan en sus valores por omisión —`etag` vacío (editar en pausa) y
+/// `sync_state` en `synced` (sin badge)—, igual que con los eventos.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct StoredTask {
+    pub task_id: String,
+    pub calendar_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub due: Option<String>,
+    #[serde(default)]
+    pub all_day: bool,
+    /// `needs-action`, `in-process`, `completed`, `cancelled`, o vacío.
+    #[serde(default)]
+    pub status: String,
+    /// De 1 (la más alta) a 9, o nada.
+    #[serde(default)]
+    pub priority: Option<i64>,
+    #[serde(default)]
+    pub completed: Option<String>,
+    /// Si la tarea está terminada: con esto se dibuja la casilla marcada.
+    #[serde(default)]
+    pub done: bool,
+    #[serde(default)]
+    pub color: Option<String>,
+    /// El ETag del objeto guardado, para pasarlo como `if_match` al editar o
+    /// completar. **Vacío** en una tarea recién creada local sin confirmar: así
+    /// la ventana sabe que todavía no se puede editar.
+    #[serde(default)]
+    pub etag: String,
+    /// El estado de sincronización: `synced`, `pending` o `conflict`.
+    #[serde(default = "sync_state_default")]
+    pub sync_state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskPage {
+    items: Vec<StoredTask>,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+/// Lo que se lee del almacén para las tareas: las listas de tareas y lo que hay
+/// en ellas, con `available` para que la ventana sepa si el almacén ya tiene
+/// algo que mostrar.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+pub struct TaskReading {
+    /// Las listas donde se pueden guardar tareas, para el selector del formulario.
+    pub calendars: Vec<Calendario>,
+    pub tasks: Vec<StoredTask>,
+    /// Lo que impidió leer algo. Vacío si salió todo bien.
+    pub notices: Vec<String>,
+    /// Si el almacén tiene alguna lista de tareas. Sin ninguna, la ventana no
+    /// muestra nada: el área todavía no se encendió o la primera vuelta no
+    /// terminó.
+    pub available: bool,
+}
+
+/// Las listas de tareas del almacén. Una lista que sólo guarda eventos no va: no
+/// se puede crear una tarea en ella. Una que no dice qué guarda entra, como con
+/// los eventos: descartarla dejaría a la persona sin dónde crear una tarea sin
+/// decir por qué.
+pub fn task_calendars_from(guardados: Vec<StoredCalendar>) -> Vec<Calendario> {
+    guardados
+        .into_iter()
+        .filter(|c| c.components.is_empty() || c.components.iter().any(|x| x == "VTODO"))
+        .map(|c| Calendario {
+            url: c.id,
+            nombre: c.display_name,
+            color: c.color,
+        })
+        .collect()
+}
+
+/// Las listas de tareas y sus tareas, de todas las cuentas, por el cliente
+/// comprobado del plugin. `include_completed` decide si entran las ya
+/// terminadas.
+pub async fn read_tasks(
+    store: &StoreClient,
+    include_completed: bool,
+) -> Result<TaskReading, String> {
+    let json = store
+        .call_json("ListCalendars", &())
+        .await
+        .map_err(describe)?;
+    read_task_pages(&json, |cursor| async move {
+        store
+            .call_json(
+                "ListTasks",
+                &(
+                    Vec::<String>::new(),
+                    include_completed,
+                    cursor.as_str(),
+                    PAGE_SIZE,
+                ),
+            )
+            .await
+            .map_err(describe)
+    })
+    .await
+}
+
+/// Lo que hace [`read_tasks`] con lo que contesta el almacén, sin el bus: la
+/// lista de calendarios ya leída, y `pagina` que pide una página de tareas por
+/// su cursor.
+async fn read_task_pages<F, Fut>(
+    calendarios_json: &str,
+    mut pagina: F,
+) -> Result<TaskReading, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let guardados: Vec<StoredCalendar> = serde_json::from_str(calendarios_json)
+        .map_err(|e| format!("no se pudieron leer los calendarios: {e}"))?;
+    let calendars = task_calendars_from(guardados);
+    if calendars.is_empty() {
+        return Ok(TaskReading::default());
+    }
+
+    let mut reading = TaskReading {
+        calendars,
+        ..Default::default()
+    };
+    let mut cursor = String::new();
+    for _ in 0..MAX_PAGES {
+        let json = pagina(cursor.clone()).await?;
+        let pagina: TaskPage = serde_json::from_str(&json)
+            .map_err(|e| format!("no se pudieron leer las tareas: {e}"))?;
+        reading.tasks.extend(pagina.items);
+        match pagina.next_cursor {
+            Some(siguiente) if !siguiente.is_empty() => cursor = siguiente,
+            _ => {
+                reading.available = true;
+                return Ok(reading);
+            }
+        }
+    }
+    reading
+        .notices
+        .push("hay más tareas de las que se pueden mostrar".into());
+    reading.available = true;
+    Ok(reading)
+}
+
+/// Lo que contesta el almacén tras crear o editar una tarea: el id global del
+/// objeto escrito, `cuenta/id`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TaskWriteResult {
+    pub task_id: String,
+}
+
+/// Crea o edita una tarea en el almacén, por el cliente comprobado del plugin.
+///
+/// `if_match` vacío **crea**: el `payload` no lleva `id`, el sincronizador genera
+/// el `UID` y encola sin precondición. Con un ETag **edita** la tarea cuyo `id`
+/// local va en el `payload`, con ese ETag de precondición. Completar una tarea es
+/// un caso de editar: el parche fija `status` en `COMPLETED` y `percent_complete`
+/// en 100.
+///
+/// El `payload` es el parche JSON que arma la ventana: `summary`/`description` de
+/// texto, `due` como `{"value": "...", "params": ["..."]}`, `status`,
+/// `percent_complete` y `priority` (ver `TaskPatch` en el servicio). No se
+/// interpreta acá: viaja tal cual, y un parche mal formado lo rechaza el
+/// sincronizador con su motivo.
+pub async fn put_task(
+    store: &StoreClient,
+    account_id: &str,
+    calendar_id: &str,
+    payload: &str,
+    if_match: &str,
+) -> Result<TaskWriteResult, String> {
+    let json = store
+        .call_json("PutTask", &(account_id, calendar_id, payload, if_match))
+        .await
+        .map_err(describe)?;
+    serde_json::from_str(&json).map_err(|e| format!("no se pudo leer la respuesta de PutTask: {e}"))
+}
+
+/// Borra una tarea del almacén, por el cliente comprobado del plugin.
+///
+/// `if_match` vacío borra sin precondición; con un ETag, sólo si el recurso no
+/// cambió desde él. El almacén marca la fila y encola el borrado; la señal
+/// `Changed` del área sale sola, y con ella la ventana relee.
+pub async fn delete_task(
+    store: &StoreClient,
+    account_id: &str,
+    task_id: &str,
+    if_match: &str,
+) -> Result<(), String> {
+    store
+        .call_json("DeleteTask", &(account_id, task_id, if_match))
+        .await
+        .map_err(describe)?;
+    Ok(())
+}
+
 /// El área del calendario, como la nombran `ListConflicts`/`GetConflict`/
 /// `ResolveConflict` del almacén. Siempre la misma desde esta aplicación: es la
-/// de calendario, no la de contactos.
+/// de calendario, no la de contactos. Las tareas son objetos del calendario, así
+/// que su conflicto se lista y se resuelve por acá, igual que el de un evento.
 pub const CALENDAR_AREA: &str = "calendar";
 
 /// Mi versión pisa a la del servidor.
@@ -872,6 +1077,10 @@ mod tests {
         conflicts: String,
         /// Lo que contesta `GetConflict`: la comparación, o `null`.
         conflict_detail: String,
+        /// Las páginas que contesta `ListTasks`, por su cursor.
+        task_pages: Vec<String>,
+        /// Lo que contesta `PutTask`. Por omisión, un id global cualquiera.
+        put_task_reply: String,
         calls: Calls,
     }
 
@@ -967,6 +1176,54 @@ mod tests {
                 cursor.parse().unwrap()
             };
             self.pages[index].clone()
+        }
+
+        fn list_tasks(
+            &self,
+            calendar_ids: Vec<String>,
+            include_completed: bool,
+            cursor: String,
+            limit: u32,
+        ) -> String {
+            self.calls.push(format!(
+                "ListTasks {calendar_ids:?} {include_completed} {cursor:?} {limit}"
+            ));
+            let index: usize = if cursor.is_empty() {
+                0
+            } else {
+                cursor.parse().unwrap()
+            };
+            self.task_pages[index].clone()
+        }
+
+        fn put_task(
+            &self,
+            account_id: String,
+            calendar_id: String,
+            payload: String,
+            if_match: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls.push(format!(
+                "PutTask {account_id} {calendar_id} {payload:?} {if_match:?}"
+            ));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::InvalidArgs("la fecha no sirve".into()));
+            }
+            Ok(self.put_task_reply.clone())
+        }
+
+        fn delete_task(
+            &self,
+            account_id: String,
+            task_id: String,
+            if_match: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("DeleteTask {account_id} {task_id} {if_match:?}"));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok("{}".to_string())
         }
     }
 
@@ -1371,5 +1628,342 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());
         assert!(calls.taken().is_empty(), "{:?}", calls.taken());
+    }
+
+    // ── Las tareas: listar, crear, editar y borrar ─────────────────────────
+
+    /// Una tarea como la serializa `TaskItem` en el servicio, con el `etag` y el
+    /// `sync_state` que trajo A-TASKDTO.
+    fn task_json(task_id: &str, done: bool) -> serde_json::Value {
+        serde_json::json!({
+            "task_id": task_id,
+            "calendar_id": "google/1",
+            "title": "Comprar pan",
+            "due": "2026-09-20T00:00:00Z",
+            "all_day": true,
+            "status": if done { "completed" } else { "needs-action" },
+            "priority": 5,
+            "completed": null,
+            "done": done,
+            "color": "#3366FF",
+            "etag": "\"etag-1\"",
+            "sync_state": "pending",
+        })
+    }
+
+    fn task_page_json(items: Vec<serde_json::Value>, next: Option<&str>) -> String {
+        serde_json::json!({ "items": items, "next_cursor": next }).to_string()
+    }
+
+    /// Las páginas de tareas que contestaría el almacén, y los cursores con que
+    /// se las pidió. Sin bus.
+    fn read_tasks_with(
+        calendarios: &serde_json::Value,
+        paginas: Vec<Result<String, String>>,
+    ) -> (Result<TaskReading, String>, Vec<String>) {
+        let pedidas = RefCell::new(Vec::new());
+        let restantes = RefCell::new(paginas.into_iter());
+        let resultado =
+            tauri::async_runtime::block_on(read_task_pages(&calendarios.to_string(), |cursor| {
+                pedidas.borrow_mut().push(cursor);
+                let siguiente = restantes
+                    .borrow_mut()
+                    .next()
+                    .unwrap_or_else(|| Err("se pidió una página de más".into()));
+                async move { siguiente }
+            }));
+        (resultado, pedidas.into_inner())
+    }
+
+    /// Sólo las listas que pueden guardar tareas van al selector del formulario:
+    /// una de sólo eventos no, una que no dice qué guarda sí.
+    #[test]
+    fn solo_las_listas_de_tareas_van_al_selector() {
+        let calendarios = task_calendars_from(vec![
+            guardado("google/1", &["VEVENT"]),
+            guardado("google/2", &["VTODO"]),
+            guardado("google/3", &["VTODO", "VEVENT"]),
+            guardado("google/4", &[]),
+        ]);
+        let urls: Vec<_> = calendarios.iter().map(|c| c.url.as_str()).collect();
+        assert_eq!(urls, ["google/2", "google/3", "google/4"]);
+    }
+
+    /// Un almacén viejo que no manda `etag` ni `sync_state` se lee igual: el
+    /// `etag` queda vacío (editar en pausa) y el estado en `synced` (sin badge).
+    #[test]
+    fn una_tarea_de_un_almacen_viejo_se_lee_igual() {
+        let vieja = serde_json::json!({
+            "task_id": "google/7",
+            "calendar_id": "google/1",
+            "title": "Algo",
+            "all_day": false,
+            "status": "needs-action",
+            "done": false,
+        });
+        let tarea: StoredTask = serde_json::from_value(vieja).unwrap();
+        assert_eq!(tarea.etag, "");
+        assert_eq!(tarea.sync_state, "synced");
+        assert_eq!(tarea.due, None);
+        assert_eq!(tarea.priority, None);
+    }
+
+    /// Lo que viaja a la ventana tiene que tener **exactamente** los nombres que
+    /// lee la ventana: Tauri no los convierte, y uno que no coincide llega como
+    /// `undefined` sin ningún error.
+    #[test]
+    fn la_lectura_de_tareas_llega_con_los_nombres_de_la_ventana() {
+        let tarea: StoredTask = serde_json::from_value(task_json("google/42", false)).unwrap();
+        let reading = TaskReading {
+            calendars: task_calendars_from(vec![guardado("google/1", &["VTODO"])]),
+            tasks: vec![tarea],
+            notices: vec!["algo".into()],
+            available: true,
+        };
+        let json = serde_json::to_value(&reading).unwrap();
+        let mut claves: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+        claves.sort();
+        assert_eq!(claves, ["available", "calendars", "notices", "tasks"]);
+
+        let mut de_la_tarea: Vec<_> = json["tasks"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        de_la_tarea.sort();
+        assert_eq!(
+            de_la_tarea,
+            [
+                "all_day",
+                "calendar_id",
+                "color",
+                "completed",
+                "done",
+                "due",
+                "etag",
+                "priority",
+                "status",
+                "sync_state",
+                "task_id",
+                "title"
+            ]
+        );
+    }
+
+    /// Sin listas de tareas el almacén no sirve todavía y no se piden tareas.
+    #[test]
+    fn sin_listas_de_tareas_no_se_piden_tareas() {
+        let solo_eventos = serde_json::json!([calendar_json("google/1", "Personal", &["VEVENT"])]);
+        let (reading, pedidas) = read_tasks_with(&solo_eventos, vec![]);
+        assert_eq!(reading.unwrap(), TaskReading::default());
+        assert!(pedidas.is_empty(), "pidió tareas: {pedidas:?}");
+    }
+
+    #[test]
+    fn las_paginas_de_tareas_se_siguen_por_su_cursor() {
+        let calendarios = serde_json::json!([calendar_json("google/1", "Tareas", &["VTODO"])]);
+        let (reading, pedidas) = read_tasks_with(
+            &calendarios,
+            vec![
+                Ok(task_page_json(
+                    vec![task_json("google/1", false)],
+                    Some("c1"),
+                )),
+                Ok(task_page_json(vec![task_json("google/2", true)], None)),
+            ],
+        );
+        let reading = reading.unwrap();
+        assert_eq!(pedidas, ["", "c1"]);
+        let ids: Vec<_> = reading.tasks.iter().map(|t| t.task_id.as_str()).collect();
+        assert_eq!(ids, ["google/1", "google/2"]);
+        assert!(reading.available);
+        assert_eq!(reading.calendars.len(), 1);
+    }
+
+    /// Un cursor que no termina no cuelga la ventana: se muestra lo que entró y
+    /// se avisa.
+    #[test]
+    fn un_cursor_de_tareas_que_no_termina_se_corta_y_se_avisa() {
+        let calendarios = serde_json::json!([calendar_json("google/1", "Tareas", &["VTODO"])]);
+        let infinitas = (0..MAX_PAGES + 3)
+            .map(|i| {
+                Ok(task_page_json(
+                    vec![task_json("google/1", false)],
+                    Some(&format!("c{i}")),
+                ))
+            })
+            .collect();
+        let (reading, pedidas) = read_tasks_with(&calendarios, infinitas);
+        let reading = reading.unwrap();
+        assert_eq!(pedidas.len(), MAX_PAGES);
+        assert!(reading.available);
+        assert!(reading.notices.iter().any(|n| n.contains("más tareas")));
+    }
+
+    /// Una página de tareas que no se entiende es un error, no un pánico.
+    #[test]
+    fn una_pagina_de_tareas_que_no_se_entiende_es_un_error() {
+        let calendarios = serde_json::json!([calendar_json("google/1", "Tareas", &["VTODO"])]);
+        let (reading, _) = read_tasks_with(&calendarios, vec![Ok("{\"items\": 3}".into())]);
+        assert!(reading.unwrap_err().contains("tareas"));
+    }
+
+    fn task_store() -> FakeStore {
+        FakeStore {
+            calendars: serde_json::json!([calendar_json("google/1", "Tareas", &["VTODO"])])
+                .to_string(),
+            task_pages: vec![
+                task_page_json(vec![task_json("google/1", false)], Some("1")),
+                task_page_json(vec![task_json("google/2", true)], None),
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// Las tareas salen del sincronizador comprobado, con todas las listas y el
+    /// tamaño de página que acepta el almacén; `include_completed` viaja tal cual.
+    #[tokio::test]
+    async fn las_tareas_se_leen_del_almacen_por_el_cliente_del_plugin() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = task_store();
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let reading = read_tasks(&test_bus::client(true), true).await.unwrap();
+
+        assert!(reading.available);
+        let ids: Vec<_> = reading.tasks.iter().map(|t| t.task_id.as_str()).collect();
+        assert_eq!(ids, ["google/1", "google/2"]);
+        assert_eq!(
+            calls.taken(),
+            [
+                "ListCalendars".to_string(),
+                format!("ListTasks [] true \"\" {PAGE_SIZE}"),
+                format!("ListTasks [] true \"1\" {PAGE_SIZE}"),
+            ]
+        );
+    }
+
+    /// A un impostor en el nombre no se le piden las tareas.
+    #[tokio::test]
+    async fn a_un_impostor_no_se_le_piden_tareas() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = task_store();
+        let calls = store.calls.clone();
+        let _impostor = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = read_tasks(&test_bus::client(false), false)
+            .await
+            .unwrap_err();
+        assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());
+        assert!(calls.taken().is_empty(), "{:?}", calls.taken());
+    }
+
+    /// Crear una tarea va con `if_match` vacío y devuelve el id global nuevo.
+    #[tokio::test]
+    async fn crear_una_tarea_va_sin_etag_y_devuelve_el_id() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let mut store = write_store("", false);
+        store.put_task_reply = r#"{"task_id":"google/42"}"#.to_string();
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let payload = r#"{"summary":"Comprar pan"}"#;
+        let result = put_task(&test_bus::client(true), "google", "1", payload, "")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            TaskWriteResult {
+                task_id: "google/42".into()
+            }
+        );
+        assert_eq!(
+            calls.taken(),
+            [format!("PutTask google 1 {payload:?} \"\"")]
+        );
+    }
+
+    /// Completar una tarea es editar con el ETag: el parche fija el estado y el
+    /// porcentaje, y el ETag va de precondición.
+    #[tokio::test]
+    async fn completar_una_tarea_va_con_el_etag() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let mut store = write_store("", false);
+        store.put_task_reply = r#"{"task_id":"google/42"}"#.to_string();
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let payload = r#"{"id":42,"status":"COMPLETED","percent_complete":100}"#;
+        put_task(
+            &test_bus::client(true),
+            "google",
+            "1",
+            payload,
+            "\"etag-1\"",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            [format!("PutTask google 1 {payload:?} \"\\\"etag-1\\\"\"")]
+        );
+    }
+
+    /// Borrar una tarea llega al sincronizador comprobado con el id local y el
+    /// `if_match`.
+    #[tokio::test]
+    async fn borrar_una_tarea_llega_al_sincronizador() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", false);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        delete_task(&test_bus::client(true), "google", "42", "\"etag-1\"")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            [r#"DeleteTask google 42 "\"etag-1\"""#.to_string()]
+        );
+    }
+
+    /// Un «no» de la persona al borrar una tarea se vuelve la misma marca que en
+    /// la lectura, para que la ventana pinte el estado de «sin permiso».
+    #[tokio::test]
+    async fn un_no_al_borrar_una_tarea_se_vuelve_la_marca() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", true);
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = delete_task(&test_bus::client(true), "google", "42", "")
+            .await
+            .unwrap_err();
+        assert_eq!(error, STORE_PERMISSION_DENIED);
+    }
+
+    /// Una respuesta de `PutTask` que no se entiende es un error, no un pánico.
+    #[tokio::test]
+    async fn una_respuesta_de_put_task_que_no_se_entiende_es_un_error() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let mut store = write_store("", false);
+        store.put_task_reply = "no es json".into();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = put_task(&test_bus::client(true), "google", "1", "{}", "")
+            .await
+            .unwrap_err();
+        assert!(error.contains("PutTask"), "{error}");
     }
 }
