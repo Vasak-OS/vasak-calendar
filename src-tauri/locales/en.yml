@@ -70,3 +70,13 @@ agenda:
   nothing: Nothing today
   empty: No events this month
   emptyNote: Use the arrows above to go to another month.
+# The "no permission" state for reading the stored calendar, with the button
+# that reopens the vasak-permissions dialog (store wave 2).
+permiso:
+  titulo: No permission to see the calendar
+  descripcion: You didn't grant permission to read the calendar stored on the system. Ask for it again so the dialog shows up.
+  pedir: Ask for permission again
+  # When the dialog couldn't even be reopened.
+  limite: You just asked a moment ago; wait a minute and try again.
+  denegado: This permission can't be asked for again.
+  error: Couldn't ask for permission again.

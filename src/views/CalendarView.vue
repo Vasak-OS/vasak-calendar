@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { ActionButton, ThemeIcon } from '@vasakgroup/vue-libvasak';
+import { ActionButton, EmptyState, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
@@ -31,15 +31,40 @@ const {
 	calendarios,
 	cargando,
 	avisos,
+	sinPermiso,
 	eventsOf,
 	cargar,
 	refresh,
+	pedirPermisoDeNuevo,
 	syncStatuses,
 	refreshFailures,
 	goPrevious,
 	goNext,
 	goToToday,
 } = useCalendario();
+
+/**
+ * El botón de «volver a pedir el permiso»: mientras pide se desactiva —no es
+ * instantáneo y dos clics seguidos chocan con el techo de uno por minuto— y, si
+ * no se pudo ni reabrir el diálogo, deja debajo el motivo traducido (el techo, o
+ * un recurso ajeno). Si se reabrió, `pedirPermisoDeNuevo` ya releyó: o aparece
+ * el calendario, o vuelve el mismo estado porque la persona dijo que no de nuevo.
+ */
+const pidiendoPermiso = ref(false);
+const avisoPermiso = ref('');
+async function reclamarPermiso() {
+	if (pidiendoPermiso.value) {
+		return;
+	}
+	avisoPermiso.value = '';
+	pidiendoPermiso.value = true;
+	try {
+		const key = await pedirPermisoDeNuevo();
+		avisoPermiso.value = key ? t(key) : '';
+	} finally {
+		pidiendoPermiso.value = false;
+	}
+}
 
 /**
  * El título del período que se está mirando —el mes, el día, la semana, el
@@ -159,7 +184,33 @@ onMounted(async () => {
       </div>
     </template>
 
+    <!-- Sin permiso para leer el almacén, el calendario queda vacío y sin
+         salida: en vez de la cuadrícula y el panel vacíos, un estado que lo dice
+         y el botón que vuelve a abrir el diálogo. Ocupa la fila entera, así que
+         con la ventana angosta se ve igual —una sola cosa centrada—. -->
+    <div v-if="sinPermiso" class="flex min-h-0 min-w-0 flex-1 items-center justify-center">
+      <EmptyState
+        icon="dialog-password"
+        :title="t('permiso.titulo')"
+        :note="t('permiso.descripcion')">
+        <div class="flex min-w-0 flex-col items-center gap-2">
+          <ActionButton
+            variant="primary"
+            :label="t('permiso.pedir')"
+            :loading="pidiendoPermiso"
+            @click="reclamarPermiso" />
+          <!-- El motivo de que no se pudiera ni reabrir el diálogo —el techo, un
+               recurso ajeno—, debajo del botón y anunciado para el lector de
+               pantalla. -->
+          <p v-if="avisoPermiso" class="max-w-prose text-body-s text-tx-muted" role="status">
+            {{ avisoPermiso }}
+          </p>
+        </div>
+      </EmptyState>
+    </div>
+
     <!-- Las secciones separadas por aire: cada una es una superficie redondeada. -->
+    <template v-else>
     <AccountsPanel
       :class="paneClass('accounts', pane)"
       :accounts="cuentas"
@@ -249,5 +300,6 @@ onMounted(async () => {
         :zone="zona"
         :events-of="eventsOf" />
     </div>
+    </template>
   </WindowAppLayout>
 </template>
