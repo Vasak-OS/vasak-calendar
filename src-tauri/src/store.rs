@@ -502,8 +502,7 @@ pub async fn put_task(
         .call_json("PutTask", &(account_id, calendar_id, payload, if_match))
         .await
         .map_err(describe)?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("no se pudo leer la respuesta de PutTask: {e}"))
+    serde_json::from_str(&json).map_err(|e| format!("no se pudo leer la respuesta de PutTask: {e}"))
 }
 
 /// Borra una tarea del almacén, por el cliente comprobado del plugin.
@@ -1755,8 +1754,7 @@ mod tests {
     /// Sin listas de tareas el almacén no sirve todavía y no se piden tareas.
     #[test]
     fn sin_listas_de_tareas_no_se_piden_tareas() {
-        let solo_eventos =
-            serde_json::json!([calendar_json("google/1", "Personal", &["VEVENT"])]);
+        let solo_eventos = serde_json::json!([calendar_json("google/1", "Personal", &["VEVENT"])]);
         let (reading, pedidas) = read_tasks_with(&solo_eventos, vec![]);
         assert_eq!(reading.unwrap(), TaskReading::default());
         assert!(pedidas.is_empty(), "pidió tareas: {pedidas:?}");
@@ -1768,7 +1766,10 @@ mod tests {
         let (reading, pedidas) = read_tasks_with(
             &calendarios,
             vec![
-                Ok(task_page_json(vec![task_json("google/1", false)], Some("c1"))),
+                Ok(task_page_json(
+                    vec![task_json("google/1", false)],
+                    Some("c1"),
+                )),
                 Ok(task_page_json(vec![task_json("google/2", true)], None)),
             ],
         );
@@ -1786,7 +1787,12 @@ mod tests {
     fn un_cursor_de_tareas_que_no_termina_se_corta_y_se_avisa() {
         let calendarios = serde_json::json!([calendar_json("google/1", "Tareas", &["VTODO"])]);
         let infinitas = (0..MAX_PAGES + 3)
-            .map(|i| Ok(task_page_json(vec![task_json("google/1", false)], Some(&format!("c{i}")))))
+            .map(|i| {
+                Ok(task_page_json(
+                    vec![task_json("google/1", false)],
+                    Some(&format!("c{i}")),
+                ))
+            })
             .collect();
         let (reading, pedidas) = read_tasks_with(&calendarios, infinitas);
         let reading = reading.unwrap();
@@ -1877,7 +1883,10 @@ mod tests {
                 task_id: "google/42".into()
             }
         );
-        assert_eq!(calls.taken(), [format!("PutTask google 1 {payload:?} \"\"")]);
+        assert_eq!(
+            calls.taken(),
+            [format!("PutTask google 1 {payload:?} \"\"")]
+        );
     }
 
     /// Completar una tarea es editar con el ETag: el parche fija el estado y el
@@ -1892,9 +1901,15 @@ mod tests {
         let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
 
         let payload = r#"{"id":42,"status":"COMPLETED","percent_complete":100}"#;
-        put_task(&test_bus::client(true), "google", "1", payload, "\"etag-1\"")
-            .await
-            .unwrap();
+        put_task(
+            &test_bus::client(true),
+            "google",
+            "1",
+            payload,
+            "\"etag-1\"",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             calls.taken(),
