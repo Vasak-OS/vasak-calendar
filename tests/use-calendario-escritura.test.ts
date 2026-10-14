@@ -84,6 +84,95 @@ describe('crear', () => {
 	});
 });
 
+describe('editar', () => {
+	test('pasa el ETag como ifMatch y el parche con id', async () => {
+		setAnswer('listar_cuentas', []);
+		setAnswer('store_events', { available: true, calendarios: [], eventos: [], fallos: [] });
+
+		await enUnAmbito(async (cal) => {
+			const fallo = await cal.writeEvent('google', '1', { id: 42, summary: 'Otro' }, '"etag-1"');
+			expect(fallo).toBeNull();
+			expect(ultimaLlamada('put_event')).toEqual({
+				accountId: 'google',
+				calendarId: '1',
+				payload: JSON.stringify({ id: 42, summary: 'Otro' }),
+				ifMatch: '"etag-1"',
+			});
+		});
+	});
+});
+
+describe('conflictos', () => {
+	test('getConflict parte el id global y pide la comparación', async () => {
+		setAnswer('listar_cuentas', []);
+		const comparison = {
+			id: '42',
+			op: 'put',
+			local: 'LOCAL',
+			server: 'SERVER',
+			server_etag: '"srv"',
+			server_unavailable: false,
+		};
+		setAnswer('get_conflict', comparison);
+
+		await enUnAmbito(async (cal) => {
+			const traido = await cal.getConflict('google/42');
+			expect(traido).toEqual(comparison);
+			expect(ultimaLlamada('get_conflict')).toEqual({ accountId: 'google', id: '42' });
+		});
+	});
+
+	test('getConflict devuelve null si el id no tiene forma global', async () => {
+		setAnswer('listar_cuentas', []);
+		await enUnAmbito(async (cal) => {
+			expect(await cal.getConflict('sin-barra')).toBeNull();
+			expect(invocations.some((i) => i.command === 'get_conflict')).toBe(false);
+		});
+	});
+
+	test('getConflict trata undefined como null (el id ya no está en conflicto)', async () => {
+		setAnswer('listar_cuentas', []);
+		await enUnAmbito(async (cal) => {
+			expect(await cal.getConflict('google/42')).toBeNull();
+		});
+	});
+
+	test('resolveConflict manda la elección y relee', async () => {
+		setAnswer('listar_cuentas', []);
+		setAnswer('store_events', { available: true, calendarios: [], eventos: [], fallos: [] });
+
+		await enUnAmbito(async (cal) => {
+			const fallo = await cal.resolveConflict('google/42', 'keep_local');
+			expect(fallo).toBeNull();
+			expect(ultimaLlamada('resolve_conflict')).toEqual({
+				accountId: 'google',
+				id: '42',
+				choice: 'keep_local',
+			});
+			// Releyó: volvió a pedir los eventos del almacén.
+			expect(invocations.some((i) => i.command === 'store_events')).toBe(true);
+		});
+	});
+
+	test('resolveConflict de un id sin forma global no intenta nada', async () => {
+		setAnswer('listar_cuentas', []);
+		await enUnAmbito(async (cal) => {
+			const fallo = await cal.resolveConflict('sin-barra', 'take_server');
+			expect(fallo).toBe('editor.noSePuede');
+			expect(invocations.some((i) => i.command === 'resolve_conflict')).toBe(false);
+		});
+	});
+
+	test('un fallo al resolver vuelve como texto', async () => {
+		setAnswer('listar_cuentas', []);
+		setFailure('resolve_conflict', 'sin conexión');
+		await enUnAmbito(async (cal) => {
+			const fallo = await cal.resolveConflict('google/42', 'take_server');
+			expect(fallo).toBe('sin conexión');
+		});
+	});
+});
+
 describe('borrar', () => {
 	test('saca el evento de la vista ya y llama a delete_event', async () => {
 		setAnswer('listar_cuentas', []);

@@ -4,6 +4,7 @@ import { ActionButton, EmptyState, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
+import ConflictDialog from '@/components/calendar/ConflictDialog.vue';
 import EventDialog from '@/components/calendar/EventDialog.vue';
 import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
@@ -40,6 +41,8 @@ const {
 	focusDay,
 	writeEvent,
 	deleteEvent,
+	getConflict,
+	resolveConflict,
 	pedirPermisoDeNuevo,
 	syncStatuses,
 	refreshFailures,
@@ -80,16 +83,17 @@ function openEvent(event: CalendarEvent) {
 	dialogOpen.value = true;
 }
 
-/** Crea el evento con lo que armó el formulario; cierra si salió bien. */
+/** Crea o edita el evento con lo que armó el formulario; cierra si salió bien. */
 async function onSubmit(value: {
 	accountId: string;
 	calendarId: string;
 	payload: Record<string, unknown>;
+	ifMatch: string;
 }) {
 	dialogBusy.value = true;
 	dialogError.value = '';
 	try {
-		const fallo = await writeEvent(value.accountId, value.calendarId, value.payload, '');
+		const fallo = await writeEvent(value.accountId, value.calendarId, value.payload, value.ifMatch);
 		if (fallo) {
 			dialogError.value = fallo;
 			return;
@@ -97,6 +101,42 @@ async function onSubmit(value: {
 		dialogOpen.value = false;
 	} finally {
 		dialogBusy.value = false;
+	}
+}
+
+/**
+ * El diálogo de resolver un conflicto, con la comparación «la mía / la del
+ * servidor». Se abre desde el aviso del evento en conflicto.
+ */
+const conflictOpen = ref(false);
+const conflictEvent = ref<CalendarEvent | null>(null);
+const conflictError = ref('');
+const conflictBusy = ref(false);
+
+/** Deja el formulario del evento y abre la comparación del conflicto. */
+function openConflict(event: CalendarEvent) {
+	dialogOpen.value = false;
+	conflictEvent.value = event;
+	conflictError.value = '';
+	conflictOpen.value = true;
+}
+
+/** Resuelve el conflicto con la elección de la persona; cierra si salió bien. */
+async function onResolveConflict(choice: 'keep_local' | 'take_server') {
+	if (!conflictEvent.value) {
+		return;
+	}
+	conflictBusy.value = true;
+	conflictError.value = '';
+	try {
+		const fallo = await resolveConflict(conflictEvent.value.uid, choice);
+		if (fallo) {
+			conflictError.value = fallo === 'editor.noSePuede' ? t(fallo) : fallo;
+			return;
+		}
+		conflictOpen.value = false;
+	} finally {
+		conflictBusy.value = false;
 	}
 }
 
@@ -401,6 +441,18 @@ onMounted(async () => {
       :error="dialogError"
       :busy="dialogBusy"
       @submit="onSubmit"
-      @delete-event="onDeleteEvent" />
+      @delete-event="onDeleteEvent"
+      @resolve-conflict="openConflict" />
+
+    <!-- La comparación «la mía / la del servidor» de un evento en conflicto,
+         flotante dentro de la ventana. Como el formulario, vive fuera del
+         `v-if`/`v-else` para que no se desmonte al recargar el mes. -->
+    <ConflictDialog
+      v-model:open="conflictOpen"
+      :event="conflictEvent"
+      :load="getConflict"
+      :error="conflictError"
+      :busy="conflictBusy"
+      @resolve="onResolveConflict" />
   </WindowAppLayout>
 </template>

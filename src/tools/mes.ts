@@ -113,10 +113,34 @@ export interface CalendarEvent {
 	/**
 	 * El ETag del evento, cuando el almacén lo entrega. Es lo que hace falta para
 	 * editar (`if_match`), así que mientras no esté el evento sólo se puede ver y
-	 * borrar: editar queda en pausa (ver `EventDialog.vue`). Hoy ninguna lectura
-	 * del almacén lo trae, así que llega siempre vacío.
+	 * borrar: editar queda en pausa (ver `EventDialog.vue`). El camino de cada
+	 * cuenta lee del servidor directo y no da uno que sirva de precondición, así
+	 * que por ahí llega vacío; del almacén llega lleno salvo en una creación local
+	 * sin confirmar.
 	 */
 	etag?: string | null;
+	/**
+	 * El estado de sincronización del evento: `synced` (al día, sin marca),
+	 * `pending` (sin sincronizar) o `conflict` (chocó con el servidor y hay que
+	 * resolverlo). El camino de cada cuenta lee del servidor, así que por ahí es
+	 * siempre `synced`. Ausente en lecturas viejas, que se tratan como `synced`.
+	 */
+	sync_state?: string;
+}
+
+/** Si un evento está sin sincronizar: cambiado en local, todavía no en el servidor. */
+export function isPending(event: CalendarEvent): boolean {
+	return event.sync_state === 'pending';
+}
+
+/** Si un evento chocó con el servidor y espera que la persona lo resuelva. */
+export function isConflict(event: CalendarEvent): boolean {
+	return event.sync_state === 'conflict';
+}
+
+/** Si un evento se puede editar: tiene un ETag con el que pedir la precondición. */
+export function canEditEvent(event: CalendarEvent | null | undefined): boolean {
+	return !!event?.etag;
 }
 
 /** Las 42 celdas del mes que contiene `referencia`, en la zona de la agenda. */

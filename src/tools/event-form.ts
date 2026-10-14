@@ -59,22 +59,23 @@ export type BuildResult =
 	| { ok: false; error: string };
 
 /**
- * Arma lo necesario para crear un evento a partir del formulario, o dice qué
- * falta con una clave de i18n.
+ * Arma el parche de los campos del formulario —título, fechas y, sólo si se
+ * escribieron, ubicación y descripción— o dice qué falta con una clave de i18n.
  *
- * El parche de **crear** no lleva `id`; fija el título, el comienzo y el fin, y
- * la ubicación y la descripción sólo si se escribieron (en blanco no se mandan,
- * para no crear un evento con campos vacíos explícitos). Las fechas pasan por
- * `pickerToIcal`, que elige `DATE` o `DATE-TIME` según todo-el-día.
+ * Es la parte común de crear y editar. La ubicación y la descripción en blanco
+ * **no se mandan** (ausentes): al crear, para no dejar campos vacíos explícitos;
+ * al editar, porque la ocurrencia no las trae y la escritura es conservadora
+ * (ausente no toca, ver `store::put_event`), así que un campo que la vista no
+ * cargó no se pisa. Las fechas pasan por `pickerToIcal`, que elige `DATE` o
+ * `DATE-TIME` según todo-el-día.
  */
-export function buildCreate(state: EventFormState, zone: string): BuildResult {
+function buildPatch(
+	state: EventFormState,
+	zone: string
+): { ok: true; patch: Record<string, unknown> } | { ok: false; error: string } {
 	const summary = state.summary.trim();
 	if (!summary) {
 		return { ok: false, error: 'editor.faltaTitulo' };
-	}
-	const parts = splitGlobalId(state.calendar);
-	if (!parts) {
-		return { ok: false, error: 'editor.faltaCalendario' };
 	}
 	const start = pickerToIcal(state.start, zone, state.allDay);
 	const end = pickerToIcal(state.end, zone, state.allDay);
@@ -85,11 +86,7 @@ export function buildCreate(state: EventFormState, zone: string): BuildResult {
 		return { ok: false, error: 'editor.rangoInvalido' };
 	}
 
-	const patch: Record<string, unknown> = {
-		summary,
-		start,
-		end,
-	};
+	const patch: Record<string, unknown> = { summary, start, end };
 	const location = state.location.trim();
 	if (location) {
 		patch.location = location;
@@ -98,8 +95,60 @@ export function buildCreate(state: EventFormState, zone: string): BuildResult {
 	if (description) {
 		patch.description = description;
 	}
+	return { ok: true, patch };
+}
 
-	return { ok: true, accountId: parts.accountId, calendarId: parts.localId, patch };
+/**
+ * Arma lo necesario para crear un evento a partir del formulario, o dice qué
+ * falta con una clave de i18n. El parche de **crear** no lleva `id`: el
+ * sincronizador genera el `UID`.
+ */
+export function buildCreate(state: EventFormState, zone: string): BuildResult {
+	const parts = splitGlobalId(state.calendar);
+	if (!parts) {
+		return { ok: false, error: 'editor.faltaCalendario' };
+	}
+	const built = buildPatch(state, zone);
+	if (!built.ok) {
+		return built;
+	}
+	return { ok: true, accountId: parts.accountId, calendarId: parts.localId, patch: built.patch };
+}
+
+/**
+ * Arma lo necesario para **editar** un evento, o dice qué falta con una clave de
+ * i18n.
+ *
+ * A diferencia de crear, el parche lleva el `id` **local** del evento —el número
+ * de `eventUid`, partido de su id global `cuenta/número`—, que es lo que pide
+ * `PutEvent` para saber a cuál editar. La cuenta y el calendario salen de
+ * `calendar` (el id global del calendario del evento), no del desplegable: al
+ * editar no se puede mover de calendario. Si el id del evento o el del
+ * calendario no tienen la forma `cuenta/número`, el evento no se puede escribir.
+ */
+export function buildEdit(state: EventFormState, zone: string, eventUid: string): BuildResult {
+	const calendarParts = splitGlobalId(state.calendar);
+	if (!calendarParts) {
+		return { ok: false, error: 'editor.faltaCalendario' };
+	}
+	const eventParts = splitGlobalId(eventUid);
+	if (!eventParts) {
+		return { ok: false, error: 'editor.noSePuede' };
+	}
+	const id = Number(eventParts.localId);
+	if (!Number.isInteger(id) || id <= 0) {
+		return { ok: false, error: 'editor.noSePuede' };
+	}
+	const built = buildPatch(state, zone);
+	if (!built.ok) {
+		return built;
+	}
+	return {
+		ok: true,
+		accountId: calendarParts.accountId,
+		calendarId: calendarParts.localId,
+		patch: { id, ...built.patch },
+	};
 }
 
 /**

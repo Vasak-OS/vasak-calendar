@@ -107,6 +107,23 @@ pub struct StoredOccurrence {
     pub recurring: bool,
     #[serde(default)]
     pub shown_once: bool,
+    /// El ETag del objeto guardado, para pasarlo como `if_match` al editar.
+    /// **Vacío** en un objeto recién creado local sin confirmar: así la ventana
+    /// sabe que todavía no se puede editar. Un almacén de antes de A2 no lo
+    /// manda y queda vacío, con lo que editar sigue en pausa, como estaba.
+    #[serde(default)]
+    pub etag: String,
+    /// El estado de sincronización del objeto: `synced`, `pending` o `conflict`.
+    /// Un almacén viejo que no lo manda se toma como `synced`: sin badge, como
+    /// antes.
+    #[serde(default = "sync_state_default")]
+    pub sync_state: String,
+}
+
+/// Lo que vale `sync_state` cuando el almacén no lo manda: un objeto que viaja
+/// sin estado es uno ya sincronizado, que no lleva ninguna marca.
+fn sync_state_default() -> String {
+    "synced".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -165,6 +182,8 @@ pub fn event_from(o: StoredOccurrence) -> EventInCalendar {
         },
         calendar: o.calendar_id,
         color: o.color,
+        etag: o.etag,
+        sync_state: o.sync_state,
     }
 }
 
@@ -300,6 +319,119 @@ pub async fn delete_event(
     Ok(())
 }
 
+/// El área del calendario, como la nombran `ListConflicts`/`GetConflict`/
+/// `ResolveConflict` del almacén. Siempre la misma desde esta aplicación: es la
+/// de calendario, no la de contactos.
+pub const CALENDAR_AREA: &str = "calendar";
+
+/// Mi versión pisa a la del servidor.
+pub const CHOICE_KEEP_LOCAL: &str = "keep_local";
+/// Adopto la versión del servidor y descarto la mía.
+pub const CHOICE_TAKE_SERVER: &str = "take_server";
+
+/// Un objeto en conflicto, para la lista: lo mínimo para dibujar la fila. Los
+/// nombres son los de `ConflictItem` en
+/// `vasak-accounts/sync/src/store/conflict_read.rs`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ConflictSummary {
+    /// El id local del objeto, el mismo que toman `GetConflict` y `GetEvent`.
+    pub id: String,
+    /// Qué cambio local chocó: `put` (creación o edición) o `delete` (borrado).
+    pub op: String,
+    /// El título del evento, para la fila. Vacío si no se pudo resolver.
+    pub summary: String,
+    /// Si ya se trajo la copia del servidor para comparar; con `false`,
+    /// `GetConflict` dirá que la copia del servidor no está disponible.
+    pub has_server_copy: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ConflictList {
+    items: Vec<ConflictSummary>,
+}
+
+/// La comparación «la mía / la del servidor» de un objeto en conflicto. Los
+/// nombres son los de `ConflictDetail` en el servicio.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ConflictComparison {
+    pub id: String,
+    pub op: String,
+    /// El crudo local sin confirmar. **Ausente** si el cambio local es un
+    /// borrado: no hay versión local que mostrar, «la mía» es borrarlo.
+    #[serde(default)]
+    pub local: Option<String>,
+    /// El crudo de la versión del servidor, si ya se trajo. **Ausente** mientras
+    /// no esté: entonces `server_unavailable` es `true`.
+    #[serde(default)]
+    pub server: Option<String>,
+    /// El ETag de la versión del servidor, si hay copia.
+    #[serde(default)]
+    pub server_etag: Option<String>,
+    /// Si todavía no hay copia del servidor con qué comparar: la ventana muestra
+    /// «copia del servidor no disponible» en vez de fallar.
+    #[serde(default)]
+    pub server_unavailable: bool,
+}
+
+/// Si una elección de resolución de conflicto es una de las dos válidas. Se
+/// comprueba acá, antes de tocar el bus: una elección inventada no tiene que
+/// llegar al almacén.
+pub fn is_valid_choice(choice: &str) -> bool {
+    choice == CHOICE_KEEP_LOCAL || choice == CHOICE_TAKE_SERVER
+}
+
+/// Los objetos del calendario de una cuenta que chocaron con el servidor y
+/// esperan que la persona los resuelva, por el cliente comprobado del plugin.
+pub async fn list_conflicts(
+    store: &StoreClient,
+    account_id: &str,
+) -> Result<Vec<ConflictSummary>, String> {
+    let json = store
+        .call_json("ListConflicts", &(account_id, CALENDAR_AREA))
+        .await
+        .map_err(describe)?;
+    let list: ConflictList = serde_json::from_str(&json)
+        .map_err(|e| format!("no se pudieron leer los conflictos: {e}"))?;
+    Ok(list.items)
+}
+
+/// La comparación de un objeto en conflicto por su id local, para la vista de
+/// «mantener la mía / tomar la del servidor». `None` si ese id ya no está en
+/// conflicto (el almacén contesta `null`).
+pub async fn get_conflict(
+    store: &StoreClient,
+    account_id: &str,
+    id: &str,
+) -> Result<Option<ConflictComparison>, String> {
+    let json = store
+        .call_json("GetConflict", &(account_id, CALENDAR_AREA, id))
+        .await
+        .map_err(describe)?;
+    serde_json::from_str(&json).map_err(|e| format!("no se pudo leer el conflicto: {e}"))
+}
+
+/// Resuelve un conflicto: `keep_local` deja que mi versión pise a la del
+/// servidor, `take_server` adopta la del servidor. Una elección que no es
+/// ninguna de las dos se rechaza antes de tocar el bus. Tras resolver, el
+/// almacén avisa con `Changed` y la ventana relee.
+pub async fn resolve_conflict(
+    store: &StoreClient,
+    account_id: &str,
+    id: &str,
+    choice: &str,
+) -> Result<(), String> {
+    if !is_valid_choice(choice) {
+        return Err(format!(
+            "«{choice}» no es una forma de resolver el conflicto"
+        ));
+    }
+    store
+        .call_json("ResolveConflict", &(account_id, CALENDAR_AREA, id, choice))
+        .await
+        .map_err(describe)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,11 +465,14 @@ mod tests {
         })
     }
 
-    /// La misma, del almacén nuevo: suma `recurring` y `shown_once`.
+    /// La misma, del almacén nuevo: suma `recurring`, `shown_once`, el `etag` y
+    /// el `sync_state` que trajo A2.
     fn new_occurrence(event_id: &str, recurring: bool, shown_once: bool) -> serde_json::Value {
         let mut o = old_occurrence(event_id);
         o["recurring"] = recurring.into();
         o["shown_once"] = shown_once.into();
+        o["etag"] = "\"etag-1\"".into();
+        o["sync_state"] = "pending".into();
         o
     }
 
@@ -428,16 +563,24 @@ mod tests {
         // El almacén no guarda la zona en que se escribió: vacía, como un
         // evento en UTC, para no avisar de una zona que no se conoce.
         assert_eq!(evento.event.zone, "");
+        // El ETag y el estado de sincronización se hilan hasta la ventana: son
+        // lo que enciende editar y el badge de «sin sincronizar».
+        assert_eq!(evento.etag, "\"etag-1\"");
+        assert_eq!(evento.sync_state, "pending");
     }
 
     /// Con un almacén de antes de `recurring` y `shown_once`, el evento se ve
-    /// igual: se pierde el ícono de la serie, no el evento.
+    /// igual: se pierde el ícono de la serie, no el evento. El `etag` queda
+    /// vacío y el `sync_state` en `synced`, así que editar sigue en pausa y no
+    /// aparece ningún badge, como estaba.
     #[test]
     fn un_almacen_viejo_sin_recurring_ni_shown_once_se_lee_igual() {
         let ocurrencia: StoredOccurrence =
             serde_json::from_value(old_occurrence("google/42")).unwrap();
         assert!(!ocurrencia.recurring);
         assert!(!ocurrencia.shown_once);
+        assert_eq!(ocurrencia.etag, "");
+        assert_eq!(ocurrencia.sync_state, "synced");
     }
 
     /// `ListCalendars` contesta una lista de `CalendarItem`, con `color` que
@@ -493,9 +636,11 @@ mod tests {
                 "calendar",
                 "color",
                 "end",
+                "etag",
                 "recurring",
                 "shown_once",
                 "start",
+                "sync_state",
                 "title",
                 "uid",
                 "zone"
@@ -723,6 +868,10 @@ mod tests {
         /// Si `PutEvent`/`DeleteEvent` deben fallar con un error de D-Bus en vez
         /// de contestar: para probar que el error viaja a la ventana.
         fail_write: bool,
+        /// Lo que contesta `ListConflicts`: `{items:[…]}`.
+        conflicts: String,
+        /// Lo que contesta `GetConflict`: la comparación, o `null`.
+        conflict_detail: String,
         calls: Calls,
     }
 
@@ -757,6 +906,44 @@ mod tests {
         ) -> zbus::fdo::Result<String> {
             self.calls
                 .push(format!("DeleteEvent {account_id} {event_id} {if_match:?}"));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok("{}".to_string())
+        }
+
+        fn list_conflicts(&self, account_id: String, area: String) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("ListConflicts {account_id} {area}"));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok(self.conflicts.clone())
+        }
+
+        fn get_conflict(
+            &self,
+            account_id: String,
+            area: String,
+            id: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("GetConflict {account_id} {area} {id}"));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok(self.conflict_detail.clone())
+        }
+
+        fn resolve_conflict(
+            &self,
+            account_id: String,
+            area: String,
+            id: String,
+            choice: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("ResolveConflict {account_id} {area} {id} {choice}"));
             if self.fail_write {
                 return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
             }
@@ -1004,6 +1191,182 @@ mod tests {
         let _impostor = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
 
         let error = put_event(&test_bus::client(false), "google", "1", "{}", "")
+            .await
+            .unwrap_err();
+        assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());
+        assert!(calls.taken().is_empty(), "{:?}", calls.taken());
+    }
+
+    // ── Los conflictos: listar, comparar y resolver ────────────────────────
+
+    /// Sólo las dos elecciones conocidas valen; cualquier otra cosa, no. Así una
+    /// elección inventada no llega al almacén.
+    #[test]
+    fn solo_las_dos_elecciones_conocidas_valen() {
+        assert!(is_valid_choice(CHOICE_KEEP_LOCAL));
+        assert!(is_valid_choice(CHOICE_TAKE_SERVER));
+        assert!(!is_valid_choice(""));
+        assert!(!is_valid_choice("keep"));
+        assert!(!is_valid_choice("KEEP_LOCAL"));
+    }
+
+    /// La comparación se lee con los nombres del servicio, y lo que falta queda
+    /// en sus valores por omisión: sin copia del servidor, `server` es `None` y
+    /// `server_unavailable` es `true`.
+    #[test]
+    fn la_comparacion_sin_copia_del_servidor_se_lee() {
+        let json = r#"{"id":"42","op":"put","local":"BEGIN:VEVENT","server":null,
+                       "server_etag":null,"server_unavailable":true}"#;
+        let detalle: ConflictComparison = serde_json::from_str(json).unwrap();
+        assert_eq!(detalle.id, "42");
+        assert_eq!(detalle.op, "put");
+        assert_eq!(detalle.local.as_deref(), Some("BEGIN:VEVENT"));
+        assert!(detalle.server.is_none());
+        assert!(detalle.server_unavailable);
+    }
+
+    fn conflict_store(conflicts: &str, detail: &str) -> FakeStore {
+        FakeStore {
+            conflicts: conflicts.to_string(),
+            conflict_detail: detail.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// La lista sale del sincronizador comprobado, con el área del calendario, y
+    /// se desenvuelve de `{items:[…]}`.
+    #[tokio::test]
+    async fn los_conflictos_se_listan_del_almacen() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let items = r#"{"items":[{"id":"42","op":"put","summary":"Reunión","has_server_copy":true},
+                                 {"id":"7","op":"delete","summary":"","has_server_copy":false}]}"#;
+        let store = conflict_store(items, "null");
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let conflictos = list_conflicts(&test_bus::client(true), "google")
+            .await
+            .unwrap();
+
+        assert_eq!(conflictos.len(), 2);
+        assert_eq!(conflictos[0].id, "42");
+        assert_eq!(conflictos[0].op, "put");
+        assert!(conflictos[0].has_server_copy);
+        assert!(!conflictos[1].has_server_copy);
+        assert_eq!(calls.taken(), ["ListConflicts google calendar".to_string()]);
+    }
+
+    /// `GetConflict` que contesta `null` —el id ya no está en conflicto— es
+    /// `None`, no un error.
+    #[tokio::test]
+    async fn un_conflicto_que_ya_no_esta_es_none() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = conflict_store("{\"items\":[]}", "null");
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let detalle = get_conflict(&test_bus::client(true), "google", "42")
+            .await
+            .unwrap();
+        assert!(detalle.is_none());
+    }
+
+    /// La comparación de un conflicto sale del sincronizador comprobado, con el
+    /// área y el id, y se lee con los nombres del servicio.
+    #[tokio::test]
+    async fn la_comparacion_de_un_conflicto_se_lee_del_almacen() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let detail = r#"{"id":"42","op":"put","local":"LOCAL","server":"SERVER",
+                        "server_etag":"\"srv\"","server_unavailable":false}"#;
+        let store = conflict_store("{\"items\":[]}", detail);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let detalle = get_conflict(&test_bus::client(true), "google", "42")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detalle.local.as_deref(), Some("LOCAL"));
+        assert_eq!(detalle.server.as_deref(), Some("SERVER"));
+        assert!(!detalle.server_unavailable);
+        assert_eq!(
+            calls.taken(),
+            ["GetConflict google calendar 42".to_string()]
+        );
+    }
+
+    /// Resolver con una elección válida llega al sincronizador comprobado con el
+    /// área, el id y la elección.
+    #[tokio::test]
+    async fn resolver_un_conflicto_llega_al_sincronizador() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = conflict_store("{\"items\":[]}", "null");
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        resolve_conflict(&test_bus::client(true), "google", "42", CHOICE_KEEP_LOCAL)
+            .await
+            .unwrap();
+        resolve_conflict(&test_bus::client(true), "google", "7", CHOICE_TAKE_SERVER)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            [
+                "ResolveConflict google calendar 42 keep_local".to_string(),
+                "ResolveConflict google calendar 7 take_server".to_string(),
+            ]
+        );
+    }
+
+    /// Una elección inventada se rechaza antes de tocar el bus: no se le pide
+    /// nada al almacén.
+    #[tokio::test]
+    async fn una_eleccion_invalida_no_toca_el_bus() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = conflict_store("{\"items\":[]}", "null");
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = resolve_conflict(&test_bus::client(true), "google", "42", "pisar")
+            .await
+            .unwrap_err();
+        assert!(error.contains("pisar"), "{error}");
+        assert!(calls.taken().is_empty(), "{:?}", calls.taken());
+    }
+
+    /// Un «no» de la persona al listar conflictos se vuelve la misma marca que
+    /// en la lectura del mes, para que la ventana pinte el estado de «sin
+    /// permiso».
+    #[tokio::test]
+    async fn un_no_al_listar_conflictos_se_vuelve_la_marca() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let mut store = conflict_store("{\"items\":[]}", "null");
+        store.fail_write = true;
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = list_conflicts(&test_bus::client(true), "google")
+            .await
+            .unwrap_err();
+        assert_eq!(error, STORE_PERMISSION_DENIED);
+    }
+
+    /// A un impostor en el nombre no se le pide ni la lista de conflictos.
+    #[tokio::test]
+    async fn a_un_impostor_no_se_le_listan_conflictos() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = conflict_store("{\"items\":[]}", "null");
+        let calls = store.calls.clone();
+        let _impostor = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = list_conflicts(&test_bus::client(false), "google")
             .await
             .unwrap_err();
         assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());

@@ -16,9 +16,10 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { ListGroup, ListRow, StatusDot } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import EventMarks from '@/components/calendar/EventMarks.vue';
+import SyncBadge from '@/components/calendar/SyncBadge.vue';
 import { eventSpanOn } from '@/tools/agenda';
 import { interpolar } from '@/tools/interpolar';
-import type { CalendarEvent } from '@/tools/mes';
+import { type CalendarEvent, isConflict, isPending } from '@/tools/mes';
 
 const props = withDefaults(
 	defineProps<{
@@ -76,6 +77,11 @@ function timeOf(event: CalendarEvent): string {
 function hasMarks(event: CalendarEvent): boolean {
 	return event.recurring || (!!event.zone && event.zone !== props.zone);
 }
+
+/** Si la fila lleva algo en el costado: las marcas, o el badge de sincronización. */
+function hasTrailing(event: CalendarEvent): boolean {
+	return hasMarks(event) || isPending(event) || isConflict(event);
+}
 </script>
 
 <template>
@@ -95,8 +101,13 @@ function hasMarks(event: CalendarEvent): boolean {
       <template #leading>
         <StatusDot size="md" tone="accent" :color="event.color ?? undefined" />
       </template>
-      <template v-if="hasMarks(event)" #trailing>
-        <EventMarks :event="event" :zone="zone" :size="16" />
+      <template v-if="hasTrailing(event)" #trailing>
+        <div class="flex min-w-0 items-center gap-1">
+          <EventMarks v-if="hasMarks(event)" :event="event" :zone="zone" :size="16" />
+          <!-- El estado de sincronización: «sin sincronizar» o «en conflicto».
+               Un evento al día no dibuja nada. -->
+          <SyncBadge :event="event" />
+        </div>
       </template>
     </ListRow>
   </ListGroup>

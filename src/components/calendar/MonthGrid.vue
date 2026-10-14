@@ -3,6 +3,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import EventMarks from '@/components/calendar/EventMarks.vue';
+import SyncBadge from '@/components/calendar/SyncBadge.vue';
 import { claveSegunCantidad, interpolar } from '@/tools/interpolar';
 import type { CalendarEvent, Dia } from '@/tools/mes';
 import type { DayRangeProps } from '@/tools/views';
@@ -229,6 +230,9 @@ function overflowSummary(count: number): string {
                      la agenda y las columnas (`EventMarks`), en el tamaño chico
                      de la celda. -->
                 <EventMarks :event="event" :zone="zone" :size="12" />
+                <!-- El estado de sincronización, sólo el punto del tono: en la
+                     celda apretada no hay lugar para el texto, que va en el globo. -->
+                <SyncBadge :event="event" compact />
               </li>
               <li v-if="overflowOf(day) > 0" class="break-words px-1 text-tx-muted text-xs">
                 {{ overflowSummary(overflowOf(day)) }}
