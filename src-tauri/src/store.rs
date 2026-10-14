@@ -31,6 +31,49 @@ const MAX_PAGES: usize = 10;
 /// El aviso de que alguna serie no se pudo expandir del todo en el rango.
 const TRUNCATED_WARNING: &str = "hay eventos que no se pudieron expandir del todo";
 
+/// Lo que devuelve [`read_events`] cuando la persona le negó al almacén el
+/// permiso de leer el calendario. **No se traduce**: es una marca que mira la
+/// ventana para pintar el estado de «sin permiso» con su botón, y el texto lo
+/// pone ella en el idioma de la sesión (`src/tools/store-permission.ts`). Una
+/// frase traducida acá saldría en el idioma con el que se compiló el programa,
+/// no en el de quien mira, y obligaría a la ventana a reconocerla por su texto.
+pub const STORE_PERMISSION_DENIED: &str = "store-permission-denied";
+
+/// Si el almacén contestó que la persona no dio permiso.
+///
+/// Se mira sobre el error tipado y no sobre su texto, porque el `Display` de
+/// [`tauri_plugin_vsk_store::Error::Store`] es sólo el mensaje y **no** lleva el
+/// nombre del error de D-Bus: `e.to_string()` perdería el `AccessDenied`.
+///
+/// Es distinto del fail-closed del cliente del plugin —que el dueño del nombre
+/// no sea el sincronizador de verdad ([`tauri_plugin_vsk_store::Error::Impostor`])
+/// o que no haya nadie en el bus ([`tauri_plugin_vsk_store::Error::NotRunning`])—:
+/// ahí no hubo ninguna decisión que olvidar y volver a pedir no haría nada, así
+/// que la ventana lee cuenta por cuenta. Un «no» explícito, en cambio, no se
+/// esquiva yendo al servidor: eso pediría `account.calendar`, que entrega la
+/// credencial y es más que lo que la persona acaba de negar.
+pub(crate) fn denied(error: &tauri_plugin_vsk_store::Error) -> bool {
+    matches!(
+        error,
+        tauri_plugin_vsk_store::Error::Store { name: Some(name), .. }
+            if name == "org.freedesktop.DBus.Error.AccessDenied"
+                || name == "org.freedesktop.DBus.Error.AuthFailed"
+    )
+}
+
+/// El error de una lectura del almacén, como String para la ventana: la marca
+/// [`STORE_PERMISSION_DENIED`] cuando fue un «no» de la persona, y el texto del
+/// error para cualquier otra cosa —el servicio caído, un impostor en el
+/// nombre—, que la ventana trata como almacén no disponible y resuelve leyendo
+/// cuenta por cuenta.
+fn describe(error: tauri_plugin_vsk_store::Error) -> String {
+    if denied(&error) {
+        STORE_PERMISSION_DENIED.to_string()
+    } else {
+        error.to_string()
+    }
+}
+
 /// Un calendario como lo lista el almacén.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct StoredCalendar {
@@ -135,7 +178,7 @@ pub async fn read_events(
     let json = store
         .call_json("ListCalendars", &())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(describe)?;
     read_pages(&json, |cursor| async move {
         store
             .call_json(
@@ -149,7 +192,7 @@ pub async fn read_events(
                 ),
             )
             .await
-            .map_err(|e| e.to_string())
+            .map_err(describe)
     })
     .await
 }
@@ -566,6 +609,51 @@ mod tests {
         let (reading, pedidas) = read_with(&serde_json::json!({"no": "es lista"}), vec![]);
         assert!(reading.unwrap_err().contains("calendarios"));
         assert!(pedidas.is_empty());
+    }
+
+    // ── El «no» del almacén, distinto del fail-closed del dueño ────────────
+
+    use tauri_plugin_vsk_store::Error as StoreError;
+
+    fn dbus_error(name: &str) -> StoreError {
+        StoreError::Store {
+            name: Some(name.into()),
+            message: "sin permiso".into(),
+        }
+    }
+
+    /// Un `AccessDenied` (o `AuthFailed`) del almacén es un «no» de la persona;
+    /// cualquier otra cosa —el servicio caído, un impostor en el nombre— no lo
+    /// es, y la ventana la resuelve leyendo cuenta por cuenta.
+    #[test]
+    fn un_no_del_almacen_se_distingue_del_fail_closed() {
+        assert!(denied(&dbus_error(
+            "org.freedesktop.DBus.Error.AccessDenied"
+        )));
+        assert!(denied(&dbus_error("org.freedesktop.DBus.Error.AuthFailed")));
+        // El fail-closed del cliente del plugin no es un «no» que se pueda
+        // olvidar: no hubo decisión, y re-pedir no haría nada.
+        assert!(!denied(&StoreError::Impostor));
+        assert!(!denied(&StoreError::NotRunning));
+        assert!(!denied(&dbus_error(
+            "org.freedesktop.DBus.Error.ServiceUnknown"
+        )));
+    }
+
+    /// Sólo el «no» explícito se convierte en la marca que pinta el estado de
+    /// «sin permiso»; lo demás viaja con su texto para que la ventana lea cuenta
+    /// por cuenta. El texto del error no lleva el nombre de D-Bus —el `Display`
+    /// de `Store` es sólo el mensaje—, así que mirarlo a él no alcanzaría.
+    #[test]
+    fn solo_el_no_explicito_se_vuelve_la_marca() {
+        assert_eq!(
+            describe(dbus_error("org.freedesktop.DBus.Error.AccessDenied")),
+            STORE_PERMISSION_DENIED
+        );
+        // El impostor no es un «no»: viaja con su texto, no con la marca.
+        let impostor = describe(StoreError::Impostor);
+        assert_ne!(impostor, STORE_PERMISSION_DENIED);
+        assert_eq!(impostor, StoreError::Impostor.to_string());
     }
 
     // ── Por el cliente comprobado del plugin ───────────────────────────────

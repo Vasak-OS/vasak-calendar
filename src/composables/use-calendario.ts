@@ -11,6 +11,12 @@ import {
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
 import {
+	isStorePermissionDenied,
+	type ReaskOutcome,
+	reaskNoticeKey,
+	shouldReread,
+} from '@/tools/store-permission';
+import {
 	type CalendarView,
 	DEFAULT_VIEW,
 	isCalendarView,
@@ -162,6 +168,16 @@ export function useCalendario() {
 	const cargando = ref(false);
 	/** Lo que impidió leer algo, en el idioma de lo que la persona puede hacer. */
 	const avisos = ref<string[]>([]);
+	/**
+	 * Si la persona le negó al almacén el permiso de leer el calendario.
+	 *
+	 * Es distinto de que el almacén no esté: con el «no» no se va al servidor
+	 * —eso pediría la credencial de la cuenta, que es más que lo que acaba de
+	 * negar—, se muestra el estado de «sin permiso» con su botón. Se decide al
+	 * final de cada carga, para que un relee con el permiso ya concedido lo
+	 * apague solo.
+	 */
+	const sinPermiso = ref(false);
 
 	/**
 	 * Cuál es la carga vigente.
@@ -189,6 +205,9 @@ export function useCalendario() {
 		// datos: limpiarlos al final borra justo lo que esta carga acaba de
 		// descubrir, y el aviso no llega a verse nunca.
 		const nuevosAvisos: string[] = [];
+		// Si el almacén chocó con el «no» de la persona. Se decide al final, para
+		// que un relee con el permiso ya concedido lo apague solo.
+		let huboDenegacion = false;
 
 		try {
 			const conectadas = await invoke<Cuenta[]>('listar_cuentas');
@@ -211,10 +230,19 @@ export function useCalendario() {
 			if (mio !== vigente) {
 				return;
 			}
-			if (fromStore?.available) {
-				calendarios.value = fromStore.calendarios;
-				eventos.value = fromStore.eventos;
-				nuevosAvisos.push(...fromStore.fallos);
+			// El «no» al almacén no se esquiva yendo al servidor: eso pediría la
+			// credencial de la cuenta, que es más que lo que la persona acaba de
+			// negar. La vista muestra el estado de «sin permiso» con su botón.
+			if (fromStore.kind === 'denied') {
+				huboDenegacion = true;
+				calendarios.value = [];
+				eventos.value = [];
+				return;
+			}
+			if (fromStore.kind === 'ready' && fromStore.reading.available) {
+				calendarios.value = fromStore.reading.calendarios;
+				eventos.value = fromStore.reading.eventos;
+				nuevosAvisos.push(...fromStore.reading.fallos);
 				return;
 			}
 
@@ -263,23 +291,65 @@ export function useCalendario() {
 		} finally {
 			if (mio === vigente) {
 				avisos.value = nuevosAvisos;
+				sinPermiso.value = huboDenegacion;
 				cargando.value = false;
 			}
 		}
 	}
 
 	/**
-	 * Lee el rango del almacén. `null` si no se pudo —sin el servicio, sin
-	 * permiso—: quien llama lee como antes, y no se avisa nada, porque el
-	 * camino de siempre dice lo suyo si también falla.
+	 * Lo que contesta el almacén a una lectura: lo que trajo, un «no» de la
+	 * persona, o que no está disponible —sin el servicio, caído, un impostor en
+	 * el nombre—. El «no» se separa de lo no disponible porque la ventana los
+	 * resuelve distinto: con el «no» muestra el estado de «sin permiso»; sin el
+	 * servicio lee cuenta por cuenta.
 	 */
-	async function readFromStore(desde: string, hasta: string): Promise<StoreReading | null> {
+	type StoreResult =
+		| { kind: 'ready'; reading: StoreReading }
+		| { kind: 'denied' }
+		| { kind: 'unavailable' };
+
+	/** Lee el rango del almacén y separa el «no» de la persona de lo no disponible. */
+	async function readFromStore(desde: string, hasta: string): Promise<StoreResult> {
 		try {
-			return await invoke<StoreReading>('store_events', { from: desde, to: hasta });
+			const reading = await invoke<StoreReading>('store_events', { from: desde, to: hasta });
+			// Una respuesta vacía —el comando contestó `undefined`— no es el mes:
+			// se lee cuenta por cuenta, como cuando el almacén no tiene nada.
+			if (!reading) {
+				return { kind: 'unavailable' };
+			}
+			return { kind: 'ready', reading };
 		} catch (e) {
+			if (isStorePermissionDenied(e)) {
+				return { kind: 'denied' };
+			}
+			// Sin permiso no: sin el servicio, caído. No se avisa nada, porque el
+			// camino de siempre dice lo suyo si también falla.
 			console.error('no se pudo leer el almacén del calendario', e);
-			return null;
+			return { kind: 'unavailable' };
 		}
+	}
+
+	/**
+	 * Vuelve a pedir el permiso del almacén y, si se reabrió el diálogo, relee:
+	 * esa lectura es la que lo hace aparecer. Si la persona vuelve a decir que
+	 * no, el calendario sigue en «sin permiso». Devuelve la clave del aviso
+	 * cuando no se pudo **ni reabrir** —el techo de frecuencia, un recurso
+	 * ajeno, el servicio caído—, para que la vista la traduzca; `null` cuando sí
+	 * se reabrió.
+	 */
+	async function pedirPermisoDeNuevo(): Promise<string | null> {
+		let outcome: ReaskOutcome | undefined;
+		try {
+			outcome = await invoke<ReaskOutcome>('request_calendar_access_again');
+		} catch (e) {
+			console.error('no se pudo volver a pedir el permiso del calendario', e);
+			return 'permiso.error';
+		}
+		if (shouldReread(outcome)) {
+			await cargar();
+		}
+		return reaskNoticeKey(outcome);
 	}
 
 	/** El estado de la sincronización de cada cuenta, del almacén. */
@@ -482,9 +552,11 @@ export function useCalendario() {
 		eventos,
 		cargando,
 		avisos,
+		sinPermiso,
 		eventsOf,
 		cargar,
 		refresh,
+		pedirPermisoDeNuevo,
 		syncStatuses,
 		refreshFailures,
 		goPrevious,

@@ -85,3 +85,13 @@ agenda:
   nothing: Nada para hoy
   empty: No hay eventos este mes
   emptyNote: Con las flechas de arriba se pasa a otro mes.
+# El estado de «sin permiso» para leer el calendario del almacén, con el botón
+# que vuelve a abrir el diálogo de `vasak-permissions` (ola 2 del almacén).
+permiso:
+  titulo: Sin permiso para ver el calendario
+  descripcion: No diste permiso para leer el calendario guardado en el sistema. Volvé a pedirlo para que aparezca el diálogo.
+  pedir: Pedir permiso de nuevo
+  # Cuando no se pudo ni volver a abrir el diálogo.
+  limite: Ya lo pediste hace un momento; esperá un minuto y probá de nuevo.
+  denegado: No se puede volver a pedir este permiso.
+  error: No se pudo volver a pedir el permiso.

@@ -11,6 +11,7 @@ mod locales;
 mod recurrence;
 mod reloj;
 mod store;
+mod store_access;
 #[cfg(test)]
 mod test_bus;
 mod ventana;
@@ -46,6 +47,7 @@ pub fn run() {
             comandos::listar_cuentas,
             comandos::account_events,
             comandos::store_events,
+            store_access::request_calendar_access_again,
             reloj::zona_del_sistema,
         ])
         // El aviso de que la máquina cambió de huso. Va acá y no en la ventana
