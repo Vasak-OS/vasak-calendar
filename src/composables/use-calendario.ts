@@ -79,6 +79,26 @@ interface StoreReading extends LecturaDeCuenta {
 	available: boolean;
 }
 
+/** Cómo se resuelve un conflicto, igual que en `store.rs`. */
+export type ConflictChoice = 'keep_local' | 'take_server';
+
+/**
+ * La comparación «la mía / la del servidor» de un evento en conflicto, como la
+ * da `GetConflict` (ver `store.rs`). Los crudos son iCal.
+ */
+export interface ConflictComparison {
+	id: string;
+	/** `put` (creación o edición) o `delete` (borrado). */
+	op: string;
+	/** El iCal local sin confirmar. Ausente si el cambio local es un borrado. */
+	local?: string | null;
+	/** El iCal de la versión del servidor, si ya se trajo. */
+	server?: string | null;
+	server_etag?: string | null;
+	/** Si todavía no hay copia del servidor con qué comparar. */
+	server_unavailable: boolean;
+}
+
 /**
  * El mes que se está mirando y lo que hay en él.
  *
@@ -428,6 +448,54 @@ export function useCalendario() {
 		}
 	}
 
+	/**
+	 * La comparación «la mía / la del servidor» de un evento en conflicto, por su
+	 * id global `cuenta/número`. `null` si ese id ya no está en conflicto —el
+	 * almacén lo resolvió— o si no se puede identificar. Un fallo se lanza para
+	 * que la vista muestre que no se pudo traer la comparación.
+	 */
+	async function getConflict(eventUid: string): Promise<ConflictComparison | null> {
+		const parts = splitGlobalId(eventUid);
+		if (!parts) {
+			return null;
+		}
+		return (
+			(await invoke<ConflictComparison | null>('get_conflict', {
+				accountId: parts.accountId,
+				id: parts.localId,
+			})) ?? null
+		);
+	}
+
+	/**
+	 * Resuelve un conflicto: `keep_local` deja que mi versión pise a la del
+	 * servidor, `take_server` adopta la del servidor. Relee en el acto además del
+	 * aviso `vsk-store://changed`, para que el estado del evento se actualice sin
+	 * esperar. Devuelve el mensaje del fallo, o `null` si salió bien; un «no» de
+	 * la persona enciende el estado de «sin permiso», como en la lectura.
+	 */
+	async function resolveConflict(eventUid: string, choice: ConflictChoice): Promise<string | null> {
+		const parts = splitGlobalId(eventUid);
+		if (!parts) {
+			return 'editor.noSePuede';
+		}
+		try {
+			await invoke('resolve_conflict', {
+				accountId: parts.accountId,
+				id: parts.localId,
+				choice,
+			});
+			await cargar();
+			return null;
+		} catch (e) {
+			if (isStorePermissionDenied(e)) {
+				sinPermiso.value = true;
+			}
+			console.error('no se pudo resolver el conflicto', e);
+			return String(e);
+		}
+	}
+
 	/** El estado de la sincronización de cada cuenta, del almacén. */
 	const syncStatuses = ref<AccountSyncStatus[]>([]);
 	/** Las cuentas a las que el último «Actualizar» no les pudo pedir una vuelta. */
@@ -635,6 +703,8 @@ export function useCalendario() {
 		focusDay,
 		writeEvent,
 		deleteEvent,
+		getConflict,
+		resolveConflict,
 		pedirPermisoDeNuevo,
 		syncStatuses,
 		refreshFailures,

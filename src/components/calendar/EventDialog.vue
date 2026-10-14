@@ -8,19 +8,20 @@
  * validar vive en `tools/event-form.ts`, probada aparte; acá queda sólo juntar
  * lo que escribe la persona y mostrar lo que falta.
  *
- * ── Editar está en pausa hasta que el almacén dé el ETag ──────────────────────
+ * ── Editar exige el ETag; un conflicto se resuelve antes de editar ────────────
  *
  * Editar un evento exige su ETag como `if_match` (decisión 3: edición
- * conservadora con precondición), y hoy ningún DTO de lectura del almacén lo
- * trae. Un evento recién creado tampoco lo tiene hasta la primera vuelta. Así
- * que mientras el evento no tenga ETag, «Guardar» queda deshabilitado y el
- * evento se muestra como **pendiente** (punto 6 de la tarea): se puede ver y
- * borrar, no editar. En cuanto el servicio exponga el ETag por fila, se
- * enciende solo.
+ * conservadora con precondición). El almacén lo entrega por fila, así que editar
+ * se enciende cuando el evento lo tiene. Un evento recién creado sin confirmar
+ * todavía no lo tiene: sigue en pausa —se puede ver y borrar, no editar— y se
+ * muestra como **pendiente**. Un evento **en conflicto** no se edita: primero se
+ * resuelve con «mantener la mía / tomar la del servidor», que esta ventana ofrece
+ * con un aviso no destructivo (el botón abre la vista comparativa).
  */
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
+	AlertMessage,
 	Dialog,
 	DialogBody,
 	DialogContent,
@@ -35,9 +36,9 @@ import {
 } from '@vasakgroup/vue-libvasak';
 import { computed, reactive, ref, watch } from 'vue';
 import type { Calendario } from '@/composables/use-calendario';
-import { buildCreate, type EventFormState } from '@/tools/event-form';
+import { buildCreate, buildEdit, type EventFormState } from '@/tools/event-form';
 import { isoToDatePicker, isoToDateTimePicker } from '@/tools/ical-date';
-import type { CalendarEvent } from '@/tools/mes';
+import { type CalendarEvent, canEditEvent, isConflict } from '@/tools/mes';
 
 const props = withDefaults(
 	defineProps<{
@@ -61,10 +62,22 @@ const props = withDefaults(
 
 const emit = defineEmits<{
 	'update:open': [open: boolean];
-	/** Crear: el parche armado y a dónde mandarlo. */
-	submit: [value: { accountId: string; calendarId: string; payload: Record<string, unknown> }];
+	/**
+	 * Crear o editar: el parche armado, a dónde mandarlo y el `ifMatch` (vacío al
+	 * crear; el ETag del evento al editar, para la precondición).
+	 */
+	submit: [
+		value: {
+			accountId: string;
+			calendarId: string;
+			payload: Record<string, unknown>;
+			ifMatch: string;
+		},
+	];
 	/** Borrar el evento que se está viendo. */
 	'delete-event': [event: CalendarEvent];
+	/** Abrir la vista comparativa para resolver el conflicto del evento. */
+	'resolve-conflict': [event: CalendarEvent];
 }>();
 
 const { t } = useI18n();
@@ -91,16 +104,31 @@ const calendarOptions = computed(() =>
 	props.calendars.map((c) => ({ label: c.nombre, value: c.url }))
 );
 
-/**
- * Editar exige el ETag del evento, que hoy el almacén no entrega: mientras no
- * esté, «Guardar» queda apagado y el evento se ve como pendiente (punto 6).
- */
-const canSave = computed(() => props.mode === 'create' || hasEtag(props.event));
+/** Si el evento que se está viendo está en conflicto con el servidor. */
+const eventInConflict = computed(
+	() => props.mode === 'edit' && !!props.event && isConflict(props.event)
+);
 
-/** Si un evento ya tiene ETag, y entonces se puede editar. */
-function hasEtag(event: CalendarEvent | null | undefined): boolean {
-	return !!event?.etag;
-}
+/**
+ * Se puede guardar al crear siempre; al editar, sólo si el evento tiene ETag y
+ * no está en conflicto. Un conflicto se resuelve antes de editar: se muestra el
+ * aviso con el botón que abre la comparación, no «Guardar» apagado sin más.
+ */
+const canSave = computed(
+	() => props.mode === 'create' || (canEditEvent(props.event) && !eventInConflict.value)
+);
+
+/**
+ * Por qué no se puede editar todavía, como clave de i18n, o vacío si sí se
+ * puede. Un evento sin ETag está pendiente de sincronizar; uno en conflicto se
+ * resuelve primero.
+ */
+const pendingNote = computed(() => {
+	if (props.mode !== 'edit' || canSave.value || eventInConflict.value) {
+		return '';
+	}
+	return 'editor.pendiente';
+});
 
 /** El título del diálogo según para qué se abrió. */
 const title = computed(() =>
@@ -141,8 +169,9 @@ function fillBlank() {
 /**
  * Carga lo que se sabe del evento. El título, las fechas y todo-el-día salen de
  * la vez que se está mirando; la ubicación y la descripción no viajan con la
- * ocurrencia (harían falta de `GetEvent`), así que quedan en blanco: por eso, y
- * porque falta el ETag, editar está en pausa.
+ * ocurrencia (harían falta de `GetEvent`), así que quedan en blanco. Por eso la
+ * edición es conservadora: un campo en blanco no se manda, y el que la persona
+ * no tocó no se pisa (ver `buildEdit`/`store::put_event`).
  */
 function fillFrom(event: CalendarEvent) {
 	form.summary = event.title;
@@ -192,10 +221,17 @@ function close() {
 	emit('update:open', false);
 }
 
-/** Valida y, si está bien, emite el parche para crear. */
+/**
+ * Valida y, si está bien, emite el parche. Al crear arma el parche sin `id` y
+ * manda `ifMatch` vacío; al editar lo arma con el `id` del evento y manda su
+ * ETag como `ifMatch`, para la precondición.
+ */
 function onSave() {
 	localError.value = '';
-	const result = buildCreate(form, props.zone);
+	const result =
+		props.mode === 'edit' && props.event
+			? buildEdit(form, props.zone, props.event.uid)
+			: buildCreate(form, props.zone);
 	if (!result.ok) {
 		localError.value = t(result.error);
 		return;
@@ -204,12 +240,20 @@ function onSave() {
 		accountId: result.accountId,
 		calendarId: result.calendarId,
 		payload: result.patch,
+		ifMatch: props.mode === 'edit' ? (props.event?.etag ?? '') : '',
 	});
 }
 
 function onDelete() {
 	if (props.event) {
 		emit('delete-event', props.event);
+	}
+}
+
+/** Abre la vista comparativa para resolver el conflicto del evento. */
+function onResolve() {
+	if (props.event) {
+		emit('resolve-conflict', props.event);
 	}
 }
 </script>
@@ -223,6 +267,25 @@ function onDelete() {
 
       <DialogBody>
         <div class="flex flex-col gap-4">
+          <!-- En conflicto: un aviso no destructivo que no toca el evento, con el
+               botón que abre la comparación «la mía / la del servidor». Se resuelve
+               antes de poder editar. -->
+          <AlertMessage
+            v-if="eventInConflict"
+            tone="warning"
+            icon="auto"
+            :title="t('conflicto.tituloEvento')">
+            {{ t('conflicto.descripcionEvento') }}
+            <template #actions>
+              <ActionButton
+                variant="secondary"
+                size="sm"
+                :label="t('conflicto.resolver')"
+                :disabled="busy"
+                @click="onResolve" />
+            </template>
+          </AlertMessage>
+
           <FormGroup :label="t('editor.titulo')" v-slot="{ id }">
             <TextInput
               :id="id"
@@ -286,13 +349,11 @@ function onDelete() {
             {{ localError || error }}
           </p>
 
-          <!-- Editar está en pausa hasta que el almacén dé el ETag: se dice, para
-               que «Guardar» apagado no parezca un error. -->
-          <p
-            v-if="mode === 'edit' && !canSave"
-            class="text-body-s text-tx-muted"
-            role="note">
-            {{ t('editor.pendiente') }}
+          <!-- Un evento sin ETag está pendiente de sincronizar y no se puede
+               editar todavía: se dice, para que «Guardar» apagado no parezca un
+               error. Un conflicto tiene su propio aviso arriba. -->
+          <p v-if="pendingNote" class="text-body-s text-tx-muted" role="note">
+            {{ t(pendingNote) }}
           </p>
         </div>
       </DialogBody>

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	buildCreate,
+	buildEdit,
 	type EventFormState,
 	splitGlobalId,
 } from '../src/tools/event-form';
@@ -120,5 +121,71 @@ describe('buildCreate', () => {
 			MADRID
 		);
 		expect(result.ok).toBe(true);
+	});
+});
+
+describe('buildEdit', () => {
+	test('el parche lleva el id local del evento, como número', () => {
+		const result = buildEdit(form(), MADRID, 'google/42');
+		expect(result.ok).toBe(true);
+		if (!result.ok) {
+			return;
+		}
+		// La cuenta y el calendario salen del calendario del evento, no del id.
+		expect(result.accountId).toBe('google');
+		expect(result.calendarId).toBe('1');
+		expect(result.patch.id).toBe(42);
+		expect(result.patch.summary).toBe('Reunión');
+		expect(result.patch.start).toEqual({
+			value: '20260915T090000',
+			params: ['TZID=Europe/Madrid'],
+		});
+	});
+
+	test('la ubicación y la descripción en blanco no se mandan: no se pisa lo que la vista no cargó', () => {
+		const result = buildEdit(form({ location: '', description: '' }), MADRID, 'google/42');
+		expect(result.ok).toBe(true);
+		if (!result.ok) {
+			return;
+		}
+		expect('location' in result.patch).toBe(false);
+		expect('description' in result.patch).toBe(false);
+	});
+
+	test('la ubicación y la descripción escritas sí van, recortadas', () => {
+		const result = buildEdit(
+			form({ location: '  Sala 2  ', description: 'Notas' }),
+			MADRID,
+			'google/42'
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) {
+			return;
+		}
+		expect(result.patch.location).toBe('Sala 2');
+		expect(result.patch.description).toBe('Notas');
+	});
+
+	test('un id de evento sin la forma cuenta/número no se puede editar', () => {
+		for (const basura of ['', 'sin-barra', 'google/', 'google/abc', 'google/0', 'google/-3']) {
+			expect(buildEdit(form(), MADRID, basura)).toEqual({ ok: false, error: 'editor.noSePuede' });
+		}
+	});
+
+	test('sin calendario válido se avisa antes de mirar el id', () => {
+		expect(buildEdit(form({ calendar: '' }), MADRID, 'google/42')).toEqual({
+			ok: false,
+			error: 'editor.faltaCalendario',
+		});
+	});
+
+	test('arrastra las mismas validaciones de fecha y título que crear', () => {
+		expect(buildEdit(form({ summary: '  ' }), MADRID, 'google/42')).toEqual({
+			ok: false,
+			error: 'editor.faltaTitulo',
+		});
+		expect(
+			buildEdit(form({ start: '2026-09-15T10:00', end: '2026-09-15T09:00' }), MADRID, 'google/42')
+		).toEqual({ ok: false, error: 'editor.rangoInvalido' });
 	});
 });

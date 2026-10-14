@@ -121,3 +121,31 @@ editor:
   faltaCalendario: Elegí un calendario.
   fechaInvalida: Revisá las fechas.
   rangoInvalido: El evento termina antes de empezar.
+# El indicador de sincronización por evento, en el mes, la agenda y las columnas.
+sincronizacion:
+  pendiente: Sin sincronizar
+  conflicto: En conflicto
+# La vista de resolver un conflicto: la versión local y la del servidor, con las
+# dos acciones para resolverlo.
+conflicto:
+  titulo: Resolver conflicto
+  # El aviso en el formulario de un evento en conflicto.
+  tituloEvento: Este evento está en conflicto
+  descripcionEvento: Tu versión y la del servidor no coinciden. Resolvelo para poder editarlo.
+  resolver: Resolver
+  ayuda: Elegí con cuál versión quedarte. La otra se descarta.
+  local: Mi versión
+  servidor: Versión del servidor
+  mantenerLaMia: Mantener la mía
+  tomarLaDelServidor: Tomar la del servidor
+  servidorNoDisponible: La copia del servidor todavía no está disponible. Cerrá y probá de nuevo más tarde.
+  reintentarNota: Cerrá y probá de nuevo más tarde.
+  borradoLocal: Tu cambio es borrar este evento.
+  cargando: Buscando las dos versiones…
+  noSePudoCargar: No se pudo traer la comparación
+  yaResuelto: Este conflicto ya está resuelto.
+  cerrar: Cerrar
+  campoResumen: Título
+  campoComienzo: Comienzo
+  campoFin: Fin
+  campoUbicacion: Ubicación

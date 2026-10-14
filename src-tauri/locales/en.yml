@@ -106,3 +106,30 @@ editor:
   faltaCalendario: Choose a calendar.
   fechaInvalida: Check the dates.
   rangoInvalido: The event ends before it starts.
+# The per-event sync indicator, in the month, agenda and columns views.
+sincronizacion:
+  pendiente: Not synced
+  conflicto: In conflict
+# The conflict resolution view: the local version and the server's, with the two
+# actions to resolve it.
+conflicto:
+  titulo: Resolve conflict
+  tituloEvento: This event is in conflict
+  descripcionEvento: Your version and the server's don't match. Resolve it to be able to edit it.
+  resolver: Resolve
+  ayuda: Choose which version to keep. The other one is discarded.
+  local: My version
+  servidor: Server version
+  mantenerLaMia: Keep mine
+  tomarLaDelServidor: Take the server's
+  servidorNoDisponible: The server copy isn't available yet. Close and try again later.
+  reintentarNota: Close and try again later.
+  borradoLocal: Your change is to delete this event.
+  cargando: Fetching both versions…
+  noSePudoCargar: Could not fetch the comparison
+  yaResuelto: This conflict is already resolved.
+  cerrar: Close
+  campoResumen: Title
+  campoComienzo: Start
+  campoFin: End
+  campoUbicacion: Location

@@ -36,6 +36,16 @@ pub struct EventInCalendar {
     pub event: Event,
     pub calendar: String,
     pub color: Option<String>,
+    /// El ETag del evento, para editarlo con precondición (`if_match`). Vacío
+    /// cuando el evento no viene del almacén —el camino de cada cuenta lee del
+    /// servidor directo, que no da uno que sirva de precondición al almacén— o
+    /// cuando es una creación local sin confirmar: en los dos casos, no se puede
+    /// editar todavía.
+    pub etag: String,
+    /// El estado de sincronización: `synced`, `pending` (sin sincronizar) o
+    /// `conflict`. El camino de cada cuenta lee del servidor, así que es siempre
+    /// `synced`: no hay cola local que pueda quedar pendiente o en conflicto.
+    pub sync_state: String,
 }
 
 /// Lo que se pudo leer de una cuenta, y lo que no.
@@ -98,6 +108,10 @@ pub async fn account_events<R: tauri::Runtime>(
                         event,
                         calendar: calendario.url.clone(),
                         color: calendario.color.clone(),
+                        // Leído del servidor directo: no hay ETag del almacén con
+                        // que editar ni cola local que quede pendiente.
+                        etag: String::new(),
+                        sync_state: "synced".to_string(),
                     }))
             }
             // Nombre y motivo: «falló un calendario» no le dice a nadie cuál de
@@ -155,6 +169,41 @@ pub async fn delete_event<R: tauri::Runtime>(
     if_match: String,
 ) -> Result<(), String> {
     store::delete_event(&app.store(), &account_id, &event_id, &if_match).await
+}
+
+/// Los eventos del calendario de una cuenta que chocaron con el servidor y
+/// esperan que la persona los resuelva. Lo mínimo para la lista; la comparación
+/// va con [`get_conflict`].
+#[tauri::command]
+pub async fn list_conflicts<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+) -> Result<Vec<store::ConflictSummary>, String> {
+    store::list_conflicts(&app.store(), &account_id).await
+}
+
+/// La comparación «la mía / la del servidor» de un evento en conflicto, por su
+/// id local. `None` si ese id ya no está en conflicto.
+#[tauri::command]
+pub async fn get_conflict<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    id: String,
+) -> Result<Option<store::ConflictComparison>, String> {
+    store::get_conflict(&app.store(), &account_id, &id).await
+}
+
+/// Resuelve un conflicto: `keep_local` deja que mi versión pise a la del
+/// servidor, `take_server` adopta la del servidor. El almacén avisa con su señal
+/// de cambios y la ventana relee.
+#[tauri::command]
+pub async fn resolve_conflict<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    id: String,
+    choice: String,
+) -> Result<(), String> {
+    store::resolve_conflict(&app.store(), &account_id, &id, &choice).await
 }
 
 /// Lee el rango que mandó la ventana.
@@ -257,6 +306,8 @@ mod tests {
             },
             calendar: "https://nube.ejemplo.com/dav/calendars/ana/trabajo/".into(),
             color: Some("#FF5733".into()),
+            etag: String::new(),
+            sync_state: "synced".into(),
         };
 
         let json = serde_json::to_value(&evento).unwrap();
@@ -264,6 +315,10 @@ mod tests {
         assert_eq!(json["title"], "Reunión");
         assert_eq!(json["color"], "#FF5733");
         assert!(json["calendar"].as_str().unwrap().ends_with("/trabajo/"));
+        // El estado de sincronización viaja aplanado, con el nombre que lee la
+        // ventana.
+        assert_eq!(json["sync_state"], "synced");
+        assert_eq!(json["etag"], "");
         // Los nombres que lee `src/tools/mes.ts`, tal cual: Tauri no los
         // convierte, y uno que no coincide llega como `undefined` sin error.
         for campo in [

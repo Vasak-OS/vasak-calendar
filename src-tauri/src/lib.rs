@@ -49,6 +49,9 @@ pub fn run() {
             comandos::store_events,
             comandos::put_event,
             comandos::delete_event,
+            comandos::list_conflicts,
+            comandos::get_conflict,
+            comandos::resolve_conflict,
             store_access::request_calendar_access_again,
             reloj::zona_del_sistema,
         ])

@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	type CalendarEvent,
+	canEditEvent,
 	cuadricula,
 	eventsByDay,
+	isConflict,
+	isPending,
 	primeroDelMes,
 	rangoDe,
 	sumarMeses,
@@ -348,5 +351,43 @@ describe('eventsByDay', () => {
 		);
 		expect(mapa.size).toBe(1);
 		expect([...mapa.values()][0][0].uid).toBe('sano');
+	});
+});
+
+describe('el estado de un evento', () => {
+	function ev(extra: Partial<CalendarEvent> = {}): CalendarEvent {
+		return {
+			uid: 'google/1',
+			title: 'x',
+			start: '2026-09-15T14:00:00Z',
+			end: '2026-09-15T15:00:00Z',
+			all_day: false,
+			recurring: false,
+			shown_once: false,
+			zone: '',
+			calendar: 'google/1',
+			color: null,
+			...extra,
+		};
+	}
+
+	test('pendiente y conflicto se reconocen por sync_state', () => {
+		expect(isPending(ev({ sync_state: 'pending' }))).toBe(true);
+		expect(isPending(ev({ sync_state: 'synced' }))).toBe(false);
+		expect(isConflict(ev({ sync_state: 'conflict' }))).toBe(true);
+		expect(isConflict(ev({ sync_state: 'pending' }))).toBe(false);
+	});
+
+	test('sin sync_state no es ni pendiente ni conflicto', () => {
+		expect(isPending(ev())).toBe(false);
+		expect(isConflict(ev())).toBe(false);
+	});
+
+	test('se puede editar sólo con un ETag no vacío', () => {
+		expect(canEditEvent(ev({ etag: '"e1"' }))).toBe(true);
+		expect(canEditEvent(ev({ etag: '' }))).toBe(false);
+		expect(canEditEvent(ev())).toBe(false);
+		expect(canEditEvent(null)).toBe(false);
+		expect(canEditEvent(undefined)).toBe(false);
 	});
 });
