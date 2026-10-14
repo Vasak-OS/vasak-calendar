@@ -110,6 +110,13 @@ export interface CalendarEvent {
 	zone: string;
 	calendar: string;
 	color: string | null;
+	/**
+	 * El ETag del evento, cuando el almacén lo entrega. Es lo que hace falta para
+	 * editar (`if_match`), así que mientras no esté el evento sólo se puede ver y
+	 * borrar: editar queda en pausa (ver `EventDialog.vue`). Hoy ninguna lectura
+	 * del almacén lo trae, así que llega siempre vacío.
+	 */
+	etag?: string | null;
 }
 
 /** Las 42 celdas del mes que contiene `referencia`, en la zona de la agenda. */

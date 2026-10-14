@@ -95,3 +95,29 @@ permiso:
   limite: Ya lo pediste hace un momento; esperá un minuto y probá de nuevo.
   denegado: No se puede volver a pedir este permiso.
   error: No se pudo volver a pedir el permiso.
+# El formulario de crear, editar y borrar un evento.
+editor:
+  crear: Agregar evento
+  tituloCrear: Nuevo evento
+  tituloEditar: Evento
+  titulo: Título
+  tituloPlaceholder: Nombre del evento
+  calendario: Calendario
+  todoElDia: Todo el día
+  comienzo: Comienzo
+  fin: Fin
+  ubicacion: Ubicación
+  ubicacionPlaceholder: Dónde es
+  descripcion: Descripción
+  guardar: Guardar
+  cancelar: Cancelar
+  borrar: Borrar
+  borrarConfirmar: Sí, borrar
+  # Editar queda en pausa hasta que el almacén entregue el ETag del evento.
+  pendiente: "Este evento todavía no se puede editar: hay que esperar a que se sincronice."
+  # Cuando el evento no tiene un identificador que permita borrarlo.
+  noSePuede: No se pudo identificar el evento.
+  faltaTitulo: Poné un título.
+  faltaCalendario: Elegí un calendario.
+  fechaInvalida: Revisá las fechas.
+  rangoInvalido: El evento termina antes de empezar.

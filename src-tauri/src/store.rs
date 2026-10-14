@@ -248,6 +248,58 @@ where
     })
 }
 
+/// Lo que contesta el almacén tras crear o editar un evento: el id global del
+/// objeto escrito, `cuenta/id`. Es lo que la ventana usa para volver a leerlo.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WriteResult {
+    pub event_id: String,
+}
+
+/// Crea o edita un evento en el almacén, por el cliente comprobado del plugin.
+///
+/// `if_match` vacío **crea**: el `payload` no lleva `id`, el sincronizador genera
+/// el `UID` y encola sin precondición. Con un ETag **edita** el evento cuyo `id`
+/// local va en el `payload`, con ese ETag de precondición (edición conservadora:
+/// se parte del crudo guardado y se toca sólo lo que el parche nombra).
+///
+/// El `payload` es el parche JSON que arma la ventana: `summary`/`description`/
+/// `location` de texto (ausente no toca, `null` saca, un valor fija) y
+/// `start`/`end` como `{"value": "...", "params": ["..."]}`. No se interpreta
+/// acá: viaja tal cual, y un parche mal formado lo rechaza el sincronizador con
+/// su motivo, que llega como el error de cualquier otra llamada.
+pub async fn put_event(
+    store: &StoreClient,
+    account_id: &str,
+    calendar_id: &str,
+    payload: &str,
+    if_match: &str,
+) -> Result<WriteResult, String> {
+    let json = store
+        .call_json("PutEvent", &(account_id, calendar_id, payload, if_match))
+        .await
+        .map_err(describe)?;
+    serde_json::from_str(&json)
+        .map_err(|e| format!("no se pudo leer la respuesta de PutEvent: {e}"))
+}
+
+/// Borra un evento del almacén, por el cliente comprobado del plugin.
+///
+/// `if_match` vacío borra sin precondición; con un ETag, sólo si el recurso no
+/// cambió desde él. El almacén marca la fila y encola el borrado hacia el
+/// servidor; la señal `Changed` del área sale sola, y con ella la ventana relee.
+pub async fn delete_event(
+    store: &StoreClient,
+    account_id: &str,
+    event_id: &str,
+    if_match: &str,
+) -> Result<(), String> {
+    store
+        .call_json("DeleteEvent", &(account_id, event_id, if_match))
+        .await
+        .map_err(describe)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +718,11 @@ mod tests {
     struct FakeStore {
         calendars: String,
         pages: Vec<String>,
+        /// Lo que contesta `PutEvent`. Por omisión, un id global cualquiera.
+        put_reply: String,
+        /// Si `PutEvent`/`DeleteEvent` deben fallar con un error de D-Bus en vez
+        /// de contestar: para probar que el error viaja a la ventana.
+        fail_write: bool,
         calls: Calls,
     }
 
@@ -674,6 +731,36 @@ mod tests {
         fn list_calendars(&self) -> String {
             self.calls.push("ListCalendars".into());
             self.calendars.clone()
+        }
+
+        fn put_event(
+            &self,
+            account_id: String,
+            calendar_id: String,
+            payload: String,
+            if_match: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls.push(format!(
+                "PutEvent {account_id} {calendar_id} {payload:?} {if_match:?}"
+            ));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::InvalidArgs("la fecha no sirve".into()));
+            }
+            Ok(self.put_reply.clone())
+        }
+
+        fn delete_event(
+            &self,
+            account_id: String,
+            event_id: String,
+            if_match: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("DeleteEvent {account_id} {event_id} {if_match:?}"));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok("{}".to_string())
         }
 
         fn list_occurrences(
@@ -780,5 +867,146 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, tauri_plugin_vsk_store::Error::NotRunning.to_string());
+    }
+
+    // ── La escritura: crear, editar y borrar ───────────────────────────────
+
+    fn write_store(put_reply: &str, fail_write: bool) -> FakeStore {
+        FakeStore {
+            put_reply: put_reply.to_string(),
+            fail_write,
+            ..Default::default()
+        }
+    }
+
+    /// Crear va con `if_match` vacío y sin `id` en el payload, al sincronizador
+    /// comprobado, y devuelve el id global del evento nuevo.
+    #[tokio::test]
+    async fn crear_un_evento_va_sin_etag_y_devuelve_el_id() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store(r#"{"event_id":"google/42"}"#, false);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let payload = r#"{"summary":"Reunión"}"#;
+        let result = put_event(&test_bus::client(true), "google", "1", payload, "")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            WriteResult {
+                event_id: "google/42".into()
+            }
+        );
+        assert_eq!(
+            calls.taken(),
+            [format!("PutEvent google 1 {payload:?} \"\"")]
+        );
+    }
+
+    /// Editar va con el ETag como `if_match`; el payload (que lleva el `id`
+    /// local) viaja tal cual.
+    #[tokio::test]
+    async fn editar_un_evento_va_con_el_etag() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store(r#"{"event_id":"google/42"}"#, false);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let payload = r#"{"id":42,"summary":"Otro título"}"#;
+        put_event(
+            &test_bus::client(true),
+            "google",
+            "1",
+            payload,
+            "\"etag-1\"",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            [format!("PutEvent google 1 {payload:?} \"\\\"etag-1\\\"\"")]
+        );
+    }
+
+    /// Borrar va al sincronizador comprobado con el id local y el `if_match`.
+    #[tokio::test]
+    async fn borrar_un_evento_llega_al_sincronizador() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", false);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        delete_event(&test_bus::client(true), "google", "42", "")
+            .await
+            .unwrap();
+
+        assert_eq!(calls.taken(), [r#"DeleteEvent google 42 """#.to_string()]);
+    }
+
+    /// Un `PutEvent` que falla —una fecha que no es iCalendar— no entra en
+    /// pánico: el error del sincronizador viaja a la ventana como texto.
+    #[tokio::test]
+    async fn un_put_que_falla_devuelve_el_error() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", true);
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = put_event(&test_bus::client(true), "google", "1", "{}", "")
+            .await
+            .unwrap_err();
+        assert!(!error.is_empty(), "el error no puede ser vacío");
+    }
+
+    /// Un «no» de la persona al borrar se vuelve la misma marca que en la
+    /// lectura, para que la ventana pinte el estado de «sin permiso».
+    #[tokio::test]
+    async fn un_no_al_borrar_se_vuelve_la_marca() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", true);
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = delete_event(&test_bus::client(true), "google", "42", "")
+            .await
+            .unwrap_err();
+        assert_eq!(error, STORE_PERMISSION_DENIED);
+    }
+
+    /// Una respuesta de `PutEvent` que no se entiende es un error, no un pánico.
+    #[tokio::test]
+    async fn una_respuesta_de_put_que_no_se_entiende_es_un_error() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("no es json", false);
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = put_event(&test_bus::client(true), "google", "1", "{}", "")
+            .await
+            .unwrap_err();
+        assert!(error.contains("PutEvent"), "{error}");
+    }
+
+    /// A un impostor en el nombre no se le escribe nada: la escritura falla sin
+    /// tocar el almacén de mentira.
+    #[tokio::test]
+    async fn a_un_impostor_no_se_le_escribe() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store(r#"{"event_id":"x/1"}"#, false);
+        let calls = store.calls.clone();
+        let _impostor = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = put_event(&test_bus::client(false), "google", "1", "{}", "")
+            .await
+            .unwrap_err();
+        assert_eq!(error, tauri_plugin_vsk_store::Error::Impostor.to_string());
+        assert!(calls.taken().is_empty(), "{:?}", calls.taken());
     }
 }

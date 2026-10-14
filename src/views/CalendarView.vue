@@ -4,6 +4,7 @@ import { ActionButton, EmptyState, ThemeIcon } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
+import EventDialog from '@/components/calendar/EventDialog.vue';
 import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
@@ -11,6 +12,7 @@ import ViewSwitcher from '@/components/calendar/ViewSwitcher.vue';
 import YearView from '@/components/calendar/YearView.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
+import type { CalendarEvent } from '@/tools/mes';
 import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
 import { periodTitle } from '@/tools/views';
 import { civilDe } from '@/tools/zona';
@@ -35,6 +37,9 @@ const {
 	eventsOf,
 	cargar,
 	refresh,
+	focusDay,
+	writeEvent,
+	deleteEvent,
 	pedirPermisoDeNuevo,
 	syncStatuses,
 	refreshFailures,
@@ -42,6 +47,74 @@ const {
 	goNext,
 	goToToday,
 } = useCalendario();
+
+/**
+ * El formulario de crear / editar / borrar un evento.
+ *
+ * Crear necesita algún calendario donde escribir; sin ninguno, el botón de
+ * agregar no aparece. `dialogError` lleva al diálogo el mensaje de un fallo de
+ * escritura ya resuelto, y `dialogBusy` desactiva sus botones mientras guarda.
+ */
+const dialogOpen = ref(false);
+const dialogMode = ref<'create' | 'edit'>('create');
+const dialogEvent = ref<CalendarEvent | null>(null);
+const dialogError = ref('');
+const dialogBusy = ref(false);
+
+/** Si hay algún calendario donde se pueda crear un evento. */
+const canCreate = computed(() => calendarios.value.length > 0);
+
+/** Abre el formulario en blanco para crear un evento en el día del foco. */
+function openCreate() {
+	dialogMode.value = 'create';
+	dialogEvent.value = null;
+	dialogError.value = '';
+	dialogOpen.value = true;
+}
+
+/** Abre un evento para verlo o borrarlo. */
+function openEvent(event: CalendarEvent) {
+	dialogMode.value = 'edit';
+	dialogEvent.value = event;
+	dialogError.value = '';
+	dialogOpen.value = true;
+}
+
+/** Crea el evento con lo que armó el formulario; cierra si salió bien. */
+async function onSubmit(value: {
+	accountId: string;
+	calendarId: string;
+	payload: Record<string, unknown>;
+}) {
+	dialogBusy.value = true;
+	dialogError.value = '';
+	try {
+		const fallo = await writeEvent(value.accountId, value.calendarId, value.payload, '');
+		if (fallo) {
+			dialogError.value = fallo;
+			return;
+		}
+		dialogOpen.value = false;
+	} finally {
+		dialogBusy.value = false;
+	}
+}
+
+/** Borra el evento del formulario; cierra si salió bien. */
+async function onDeleteEvent(event: CalendarEvent) {
+	dialogBusy.value = true;
+	dialogError.value = '';
+	try {
+		const fallo = await deleteEvent(event);
+		if (fallo) {
+			dialogError.value = fallo === 'editor.noSePuede' ? t(fallo) : fallo;
+			return;
+		}
+		dialogOpen.value = false;
+	} finally {
+		dialogBusy.value = false;
+	}
+}
 
 /**
  * El botón de «volver a pedir el permiso»: mientras pide se desactiva —no es
@@ -154,6 +227,16 @@ onMounted(async () => {
       <span v-if="cargando" class="text-tx-muted text-xs" role="status">
         {{ t('calendario.cargando') }}
       </span>
+      <!-- Agregar un evento. Sólo si hay algún calendario donde escribir. -->
+      <ActionButton
+        v-if="canCreate && !sinPermiso"
+        variant="ghost"
+        label=""
+        icon="list-add"
+        :icon-alt="t('editor.crear')"
+        :title="t('editor.crear')"
+        :disabled="cargando"
+        @click="openCreate()" />
       <ActionButton
         variant="ghost"
         label=""
@@ -277,13 +360,15 @@ onMounted(async () => {
           :class="NARROW_ONLY"
           :days="dias"
           :zone="zona"
-          :events-of="eventsOf" />
+          :events-of="eventsOf"
+          @open="openEvent" />
       </template>
       <ColumnsView
         v-else-if="view === 'day' || view === 'days' || view === 'week'"
         :days="dias"
         :zone="zona"
-        :events-of="eventsOf" />
+        :events-of="eventsOf"
+        @open="openEvent" />
       <YearView
         v-else-if="view === 'year'"
         :year="yearNumber"
@@ -298,8 +383,24 @@ onMounted(async () => {
         ref="agendaView"
         :days="dias"
         :zone="zona"
-        :events-of="eventsOf" />
+        :events-of="eventsOf"
+        @open="openEvent" />
     </div>
     </template>
+
+    <!-- El formulario de crear / editar / borrar, flotante dentro de la ventana.
+         Vive fuera del `v-if`/`v-else` de arriba para que no se desmonte al
+         recargar el mes mientras está abierto. -->
+    <EventDialog
+      v-model:open="dialogOpen"
+      :mode="dialogMode"
+      :calendars="calendarios"
+      :zone="zona"
+      :event="dialogEvent"
+      :default-day="focusDay"
+      :error="dialogError"
+      :busy="dialogBusy"
+      @submit="onSubmit"
+      @delete-event="onDeleteEvent" />
   </WindowAppLayout>
 </template>
