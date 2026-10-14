@@ -47,6 +47,8 @@ pub fn run() {
             comandos::listar_cuentas,
             comandos::account_events,
             comandos::store_events,
+            comandos::put_event,
+            comandos::delete_event,
             store_access::request_calendar_access_again,
             reloj::zona_del_sistema,
         ])

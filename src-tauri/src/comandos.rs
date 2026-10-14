@@ -1,7 +1,10 @@
 //! Lo que la ventana le puede pedir al programa.
 //!
-//! Tres cosas: qué cuentas tienen calendarios, y qué eventos hay en un rango.
-//! Nada más — esta versión **lee**; crear eventos viene después.
+//! Lee —qué cuentas tienen calendarios, qué eventos hay en un rango— y
+//! **escribe**: crear, editar y borrar eventos, que van al almacén del sistema
+//! por el mismo cliente comprobado del plugin (ver `store.rs`). La lógica
+//! probable vive en `store.rs`; acá quedan los comandos, que son el puente con
+//! la ventana.
 //!
 //! ── Por qué un fallo no tira todo ───────────────────────────────────────────
 //!
@@ -119,6 +122,39 @@ pub async fn store_events<R: tauri::Runtime>(
     // igual que un mes vacío.
     rango(&from, &to)?;
     store::read_events(&app.store(), &from, &to).await
+}
+
+/// Crea o edita un evento en el almacén del sistema.
+///
+/// `if_match` vacío **crea** (el `payload` no lleva `id`); con un ETag **edita**
+/// el evento cuyo `id` local va en el `payload`. El `payload` es el parche JSON
+/// que arma la ventana (ver `store::put_event`). Devuelve el id global del
+/// evento escrito, que la ventana usa para reflejarlo mientras llega el aviso de
+/// cambios del almacén.
+#[tauri::command]
+pub async fn put_event<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    calendar_id: String,
+    payload: String,
+    if_match: String,
+) -> Result<store::WriteResult, String> {
+    store::put_event(&app.store(), &account_id, &calendar_id, &payload, &if_match).await
+}
+
+/// Borra un evento del almacén del sistema.
+///
+/// `event_id` es el número local del objeto; `if_match` vacío borra sin
+/// precondición, con un ETag sólo si el recurso no cambió desde él. El almacén
+/// encola el borrado y avisa; la ventana relee con ese aviso.
+#[tauri::command]
+pub async fn delete_event<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    event_id: String,
+    if_match: String,
+) -> Result<(), String> {
+    store::delete_event(&app.store(), &account_id, &event_id, &if_match).await
 }
 
 /// Lee el rango que mandó la ventana.

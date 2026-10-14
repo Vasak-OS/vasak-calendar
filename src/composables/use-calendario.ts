@@ -9,6 +9,7 @@ import {
 	syncStatus,
 } from '@vasakgroup/plugin-vsk-store';
 import { computed, onScopeDispose, ref, watch } from 'vue';
+import { splitGlobalId } from '@/tools/event-form';
 import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
 import {
 	isStorePermissionDenied,
@@ -23,7 +24,7 @@ import {
 	stepAnchor,
 	viewDays,
 } from '@/tools/views';
-import { civilDe, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
+import { civilDe, claveCivil, esZonaConocida, mismoDiaCivil, zonaDeLaSesion } from '@/tools/zona';
 
 /** Dónde se recuerda en qué zona se quiere ver la agenda. */
 const CLAVE_DE_ZONA = 'vasak-calendar.zona';
@@ -352,6 +353,81 @@ export function useCalendario() {
 		return reaskNoticeKey(outcome);
 	}
 
+	/**
+	 * El día que la vista tiene como foco, `AAAA-MM-DD` en la zona de la agenda:
+	 * con él se abre el formulario de crear, en el día que se está mirando.
+	 */
+	const focusDay = computed(() => claveCivil(civilDe(anchor.value, zona.value)));
+
+	/**
+	 * Crea o edita un evento en el almacén, y relee.
+	 *
+	 * No hace falta inventar un evento provisorio en la vista: el almacén guarda
+	 * el crudo **optimista** al encolar la escritura, así que la relectura —que
+	 * sale de la caché, sin esperar a la red— ya lo trae. Cuando el servidor
+	 * confirme, el aviso `vsk-store://changed` dispara otra relectura sola.
+	 *
+	 * Devuelve el mensaje del fallo para que el formulario lo muestre, o `null` si
+	 * salió bien. Un «no» de la persona enciende además el estado de «sin
+	 * permiso», como en la lectura.
+	 */
+	async function writeEvent(
+		accountId: string,
+		calendarId: string,
+		payload: Record<string, unknown>,
+		ifMatch: string
+	): Promise<string | null> {
+		try {
+			await invoke('put_event', {
+				accountId,
+				calendarId,
+				payload: JSON.stringify(payload),
+				ifMatch,
+			});
+			await cargar();
+			return null;
+		} catch (e) {
+			if (isStorePermissionDenied(e)) {
+				sinPermiso.value = true;
+			}
+			console.error('no se pudo guardar el evento', e);
+			return String(e);
+		}
+	}
+
+	/**
+	 * Borra un evento —la serie entera—, de forma optimista: se saca ya de la
+	 * vista y el borrado se encola hacia el servidor. No se relee en el acto: el
+	 * almacén deja la fila marcada hasta que el servidor confirma, y una
+	 * relectura la traería de vuelta; el aviso de cambios trae la relectura
+	 * definitiva cuando de verdad ya no está. Si la escritura falla, se vuelve a
+	 * leer para que el evento reaparezca: no se perdió.
+	 */
+	async function deleteEvent(event: CalendarEvent): Promise<string | null> {
+		const parts = splitGlobalId(event.uid);
+		if (!parts) {
+			return 'editor.noSePuede';
+		}
+		const antes = eventos.value;
+		eventos.value = eventos.value.filter((e) => e.uid !== event.uid);
+		try {
+			await invoke('delete_event', {
+				accountId: parts.accountId,
+				eventId: parts.localId,
+				ifMatch: event.etag ?? '',
+			});
+			return null;
+		} catch (e) {
+			// Volvió a fallar: se restaura lo que había y se avisa.
+			eventos.value = antes;
+			if (isStorePermissionDenied(e)) {
+				sinPermiso.value = true;
+			}
+			console.error('no se pudo borrar el evento', e);
+			return String(e);
+		}
+	}
+
 	/** El estado de la sincronización de cada cuenta, del almacén. */
 	const syncStatuses = ref<AccountSyncStatus[]>([]);
 	/** Las cuentas a las que el último «Actualizar» no les pudo pedir una vuelta. */
@@ -556,6 +632,9 @@ export function useCalendario() {
 		eventsOf,
 		cargar,
 		refresh,
+		focusDay,
+		writeEvent,
+		deleteEvent,
 		pedirPermisoDeNuevo,
 		syncStatuses,
 		refreshFailures,

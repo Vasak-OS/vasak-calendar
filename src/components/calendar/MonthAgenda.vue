@@ -18,10 +18,11 @@ import { computed, ref } from 'vue';
 import DayEvents from '@/components/calendar/DayEvents.vue';
 import { agendaSections, isAgendaEmpty, todaySectionKey } from '@/tools/agenda';
 import { interpolar } from '@/tools/interpolar';
-import type { Dia } from '@/tools/mes';
+import type { CalendarEvent, Dia } from '@/tools/mes';
 import type { DayRangeProps } from '@/tools/views';
 
 const props = defineProps<DayRangeProps>();
+const emit = defineEmits<{ open: [event: CalendarEvent] }>();
 
 const { t, locale } = useI18n();
 
@@ -99,7 +100,8 @@ defineExpose({ showToday });
               :events="section.events"
               :day-key="section.day.clave"
               :zone="zone"
-              :empty-label="t('agenda.nothing')" />
+              :empty-label="t('agenda.nothing')"
+              @open="emit('open', $event)" />
           </section>
         </template>
       </div>

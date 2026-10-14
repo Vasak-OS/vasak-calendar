@@ -18,9 +18,11 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import DayEvents from '@/components/calendar/DayEvents.vue';
+import type { CalendarEvent } from '@/tools/mes';
 import type { DayRangeProps } from '@/tools/views';
 
 const props = defineProps<DayRangeProps>();
+const emit = defineEmits<{ open: [event: CalendarEvent] }>();
 
 const { locale } = useI18n();
 
@@ -65,7 +67,11 @@ const columns = { gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))' };
               {{ dayNumberFormat.format(day.fecha) }}
             </span>
           </div>
-          <DayEvents :events="eventsOf(day.clave)" :day-key="day.clave" :zone="zone" />
+          <DayEvents
+            :events="eventsOf(day.clave)"
+            :day-key="day.clave"
+            :zone="zone"
+            @open="emit('open', $event)" />
         </section>
       </div>
     </div>

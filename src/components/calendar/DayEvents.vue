@@ -33,6 +33,11 @@ const props = withDefaults(
 	{ emptyLabel: undefined }
 );
 
+const emit = defineEmits<{
+	/** La persona tocó un evento, para verlo o borrarlo. */
+	open: [event: CalendarEvent];
+}>();
+
 const { t, locale } = useI18n();
 
 const emptyText = computed(() => props.emptyLabel ?? t('calendario.sinEventos'));
@@ -79,8 +84,10 @@ function hasMarks(event: CalendarEvent): boolean {
     <ListRow
       v-for="event in events"
       :key="`${event.uid}-${event.start}`"
+      role="button"
       :title="titleOf(event)"
-      :description="timeOf(event)">
+      :description="timeOf(event)"
+      @click="emit('open', event)">
       <!-- El color del calendario es **dato** del servidor, no un color del
            esquema: va por la propiedad del punto, que lo pone en una variable y
            le da el canto que lo hace visible sobre cualquier fondo. Sin color,

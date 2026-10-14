@@ -80,3 +80,29 @@ permiso:
   limite: You just asked a moment ago; wait a minute and try again.
   denegado: This permission can't be asked for again.
   error: Couldn't ask for permission again.
+# The form for creating, editing and deleting an event.
+editor:
+  crear: Add event
+  tituloCrear: New event
+  tituloEditar: Event
+  titulo: Title
+  tituloPlaceholder: Event name
+  calendario: Calendar
+  todoElDia: All day
+  comienzo: Start
+  fin: End
+  ubicacion: Location
+  ubicacionPlaceholder: Where it is
+  descripcion: Description
+  guardar: Save
+  cancelar: Cancel
+  borrar: Delete
+  borrarConfirmar: Yes, delete
+  # Editing is paused until the store exposes the event's ETag.
+  pendiente: "This event can't be edited yet: wait for it to sync."
+  # When the event has no id that would let it be deleted.
+  noSePuede: The event could not be identified.
+  faltaTitulo: Enter a title.
+  faltaCalendario: Choose a calendar.
+  fechaInvalida: Check the dates.
+  rangoInvalido: The event ends before it starts.
