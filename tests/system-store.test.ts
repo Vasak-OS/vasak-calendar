@@ -11,11 +11,12 @@
  *   cuenta por cuenta como antes;
  * - que «Actualizar» le pide una vuelta al sincronizador y relee, aunque el
  *   pedido falle;
- * - que el aviso `calendar-changed` relee el mes, y que al cerrar la ventana
+ * - que el aviso de cambios del plugin del almacén (`CHANGED_EVENT`) relee el mes, y que al cerrar la ventana
  *   se deja de escucharlo, también si se cerró antes de engancharse.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { CHANGED_EVENT } from '@vasakgroup/plugin-vsk-store';
 import { ActionButton } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { type EffectScope, effectScope } from 'vue';
@@ -25,7 +26,8 @@ import { rangoDe } from '@/tools/mes';
 import CalendarView from '@/views/CalendarView.vue';
 import { emit, invocations, olvidarTodo, setAnswer, setFailure, timesInvoked } from './dobles';
 
-const STORE_EVENT = 'calendar-changed';
+/** El pedido de «Actualizar» del plugin del almacén. */
+const REQUEST_SYNC = 'plugin:vsk-store|request_sync';
 
 let scope: EffectScope | null = null;
 let mounted: VueWrapper | null = null;
@@ -201,7 +203,7 @@ describe('«Actualizar»', () => {
 		await calendar.refresh();
 
 		const commands = invocations.map((i) => i.command);
-		expect(commands[0]).toBe('request_sync');
+		expect(commands[0]).toBe(REQUEST_SYNC);
 		expect(invocations[0].args).toEqual({ accountIds: ['google', 'nube'] });
 		// Relee después de pedir: lo que ya está se ve mientras llega lo nuevo.
 		expect(commands).toContain('listar_cuentas');
@@ -211,7 +213,7 @@ describe('«Actualizar»', () => {
 	test('si pedir la vuelta falla, igual relee lo que hay', async () => {
 		setAnswer('listar_cuentas', ACCOUNTS);
 		setAnswer('store_events', FROM_STORE);
-		setFailure('request_sync', 'RequestSync: demasiados pedidos');
+		setFailure(REQUEST_SYNC, 'RequestSync: demasiados pedidos');
 		const calendar = open();
 		const realError = console.error;
 		console.error = () => {};
@@ -240,7 +242,7 @@ describe('«Actualizar»', () => {
 		await refresh?.trigger('click');
 		await flush();
 
-		expect(timesInvoked('request_sync')).toBe(1);
+		expect(timesInvoked(REQUEST_SYNC)).toBe(1);
 		expect(timesInvoked('listar_cuentas')).toBe(1);
 	});
 });
@@ -254,7 +256,7 @@ describe('el aviso del almacén', () => {
 		await flush();
 		setAnswer('store_events', { ...FROM_STORE, eventos: [event({ uid: 'nuevo' })] });
 
-		await emit(STORE_EVENT);
+		await emit(CHANGED_EVENT, { areas: ['calendar'] });
 		await flush();
 
 		expect(timesInvoked('listar_cuentas')).toBe(2);
@@ -269,7 +271,7 @@ describe('el aviso del almacén', () => {
 
 		scope?.stop();
 		scope = null;
-		await emit(STORE_EVENT);
+		await emit(CHANGED_EVENT, { areas: ['calendar'] });
 		await flush();
 
 		expect(timesInvoked('listar_cuentas')).toBe(0);
@@ -284,7 +286,7 @@ describe('el aviso del almacén', () => {
 		scope = null;
 		await flush();
 
-		await emit(STORE_EVENT);
+		await emit(CHANGED_EVENT, { areas: ['calendar'] });
 		await flush();
 
 		expect(timesInvoked('listar_cuentas')).toBe(0);
