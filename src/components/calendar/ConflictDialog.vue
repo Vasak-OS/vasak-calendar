@@ -34,13 +34,21 @@ import {
 import { computed, ref, watch } from 'vue';
 import type { ConflictChoice, ConflictComparison } from '@/composables/use-calendario';
 import { type IcalCard, parseIcalCard } from '@/tools/ical-summary';
-import type { CalendarEvent } from '@/tools/mes';
+
+/**
+ * Lo mínimo del objeto en conflicto: su id global, con el que se trae la
+ * comparación. Un evento o una tarea lo cumplen, así que esta misma vista
+ * resuelve el conflicto de los dos (las tareas son objetos del área `calendar`).
+ */
+interface ConflictTarget {
+	uid: string;
+}
 
 const props = withDefaults(
 	defineProps<{
 		open: boolean;
-		/** El evento en conflicto, del que sale el id con que se trae la comparación. */
-		event?: CalendarEvent | null;
+		/** El objeto en conflicto, del que sale el id con que se trae la comparación. */
+		event?: ConflictTarget | null;
 		/** Trae la comparación del almacén. `null` si el id ya no está en conflicto. */
 		load: (eventUid: string) => Promise<ConflictComparison | null>;
 		/** El mensaje de un fallo al resolver, ya traducido, que decide el padre. */

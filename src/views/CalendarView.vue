@@ -1,6 +1,12 @@
 <script lang="ts" setup>
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { ActionButton, EmptyState, ThemeIcon } from '@vasakgroup/vue-libvasak';
+import {
+	ActionButton,
+	EmptyState,
+	SegmentedControl,
+	type SegmentedOption,
+	ThemeIcon,
+} from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
 import ColumnsView from '@/components/calendar/ColumnsView.vue';
@@ -9,10 +15,12 @@ import EventDialog from '@/components/calendar/EventDialog.vue';
 import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
+import TasksView from '@/components/calendar/TasksView.vue';
 import ViewSwitcher from '@/components/calendar/ViewSwitcher.vue';
 import YearView from '@/components/calendar/YearView.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
+import { type AppMode, isAppMode, savedMode, saveMode } from '@/tools/app-mode';
 import type { CalendarEvent } from '@/tools/mes';
 import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
 import { periodTitle } from '@/tools/views';
@@ -50,6 +58,26 @@ const {
 	goNext,
 	goToToday,
 } = useCalendario();
+
+/**
+ * En qué parte se está: el calendario o las tareas. Es una preferencia de la
+ * ventana y se recuerda (`tools/app-mode.ts`). Las tareas son la última pieza de
+ * M3: viven en el mismo almacén y la misma área que los eventos, así que la
+ * ventana es la misma y sólo cambia qué se mira.
+ */
+const mode = ref<AppMode>(savedMode());
+
+/** Las dos partes, para el selector de arriba. */
+const modeOptions = computed<SegmentedOption<AppMode>[]>(() => [
+	{ value: 'calendar', label: t('modo.calendario') },
+	{ value: 'tasks', label: t('modo.tareas') },
+]);
+
+/** Cambia de parte y recuerda la elección. */
+function setMode(next: AppMode) {
+	mode.value = isAppMode(next) ? next : 'calendar';
+	saveMode(mode.value);
+}
 
 /**
  * El formulario de crear / editar / borrar un evento.
@@ -262,29 +290,39 @@ onMounted(async () => {
       <ThemeIcon name="calendar" :size="24" :alt="t('app.nombre')" />
     </template>
 
-    <!-- El estado y el botón de actualizar, junto a los botones de la ventana. -->
+    <!-- El selector de parte —calendario o tareas—, y las acciones del calendario
+         (agregar, actualizar), junto a los botones de la ventana. Las acciones de
+         las tareas van en su propia barra, dentro de la vista. -->
     <template #acciones>
-      <span v-if="cargando" class="text-tx-muted text-xs" role="status">
-        {{ t('calendario.cargando') }}
-      </span>
-      <!-- Agregar un evento. Sólo si hay algún calendario donde escribir. -->
-      <ActionButton
-        v-if="canCreate && !sinPermiso"
-        variant="ghost"
-        label=""
-        icon="list-add"
-        :icon-alt="t('editor.crear')"
-        :title="t('editor.crear')"
-        :disabled="cargando"
-        @click="openCreate()" />
-      <ActionButton
-        variant="ghost"
-        label=""
-        icon="view-refresh"
-        :icon-alt="t('calendario.actualizar')"
-        :title="t('calendario.actualizar')"
-        :disabled="cargando"
-        @click="refresh()" />
+      <SegmentedControl
+        variant="chips"
+        :model-value="mode"
+        :options="modeOptions"
+        :label="t('modo.label')"
+        @change="setMode" />
+      <template v-if="mode === 'calendar'">
+        <span v-if="cargando" class="text-tx-muted text-xs" role="status">
+          {{ t('calendario.cargando') }}
+        </span>
+        <!-- Agregar un evento. Sólo si hay algún calendario donde escribir. -->
+        <ActionButton
+          v-if="canCreate && !sinPermiso"
+          variant="ghost"
+          label=""
+          icon="list-add"
+          :icon-alt="t('editor.crear')"
+          :title="t('editor.crear')"
+          :disabled="cargando"
+          @click="openCreate()" />
+        <ActionButton
+          variant="ghost"
+          label=""
+          icon="view-refresh"
+          :icon-alt="t('calendario.actualizar')"
+          :title="t('calendario.actualizar')"
+          :disabled="cargando"
+          @click="refresh()" />
+      </template>
     </template>
 
     <!-- El título del período entre sus flechas, centrado en el hueco de la
@@ -292,7 +330,7 @@ onMounted(async () => {
          la tira de arriba de la vista (ver abajo) y la barra se queda con el
          icono, actualizar y los tres controles de la ventana. -->
     <template #barra="{ narrow }">
-      <div v-if="!narrow" class="m-auto flex min-w-0 items-center gap-2">
+      <div v-if="!narrow && mode === 'calendar'" class="m-auto flex min-w-0 items-center gap-2">
         <MonthNavigation
           :title="title"
           v-bind="navLabels"
@@ -307,6 +345,14 @@ onMounted(async () => {
       </div>
     </template>
 
+    <!-- Las tareas: la última pieza de M3. Su propia vista, con su lista y su
+         formulario; reusa el badge, el conflicto y el «sin permiso» del
+         calendario. Comparte la zona de la agenda y el volver a pedir el permiso,
+         que es el mismo del área. -->
+    <TasksView v-if="mode === 'tasks'" :zone="zona" :reask="pedirPermisoDeNuevo" />
+
+    <!-- El calendario. -->
+    <template v-else>
     <!-- Sin permiso para leer el almacén, el calendario queda vacío y sin
          salida: en vez de la cuadrícula y el panel vacíos, un estado que lo dice
          y el botón que vuelve a abrir el diálogo. Ocupa la fila entera, así que
@@ -426,6 +472,7 @@ onMounted(async () => {
         :events-of="eventsOf"
         @open="openEvent" />
     </div>
+    </template>
     </template>
 
     <!-- El formulario de crear / editar / borrar, flotante dentro de la ventana.
