@@ -18,6 +18,7 @@ import { computed } from 'vue';
 import EventMarks from '@/components/calendar/EventMarks.vue';
 import SyncBadge from '@/components/calendar/SyncBadge.vue';
 import { eventSpanOn } from '@/tools/agenda';
+import { markColor } from '@/tools/event-categories';
 import { interpolar } from '@/tools/interpolar';
 import { type CalendarEvent, isConflict, isPending } from '@/tools/mes';
 
@@ -99,7 +100,7 @@ function hasTrailing(event: CalendarEvent): boolean {
            le da el canto que lo hace visible sobre cualquier fondo. Sin color,
            el acento. -->
       <template #leading>
-        <StatusDot size="md" tone="accent" :color="event.color ?? undefined" />
+        <StatusDot size="md" tone="accent" :color="markColor(event) ?? undefined" />
       </template>
       <template v-if="hasTrailing(event)" #trailing>
         <div class="flex min-w-0 items-center gap-1">

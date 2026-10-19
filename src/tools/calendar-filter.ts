@@ -20,9 +20,9 @@ export const HIDDEN_CALENDARS_KEY = 'vasak-calendar.hidden-calendars';
  * almacenamiento bloqueado, un valor que alguien ensució—, no se oculta
  * ninguno: ver de más es mejor que esconder lo que la persona no pidió esconder.
  */
-export function loadHiddenCalendars(): Set<string> {
+export function loadHiddenCalendars(key = HIDDEN_CALENDARS_KEY): Set<string> {
 	try {
-		const raw = globalThis.localStorage?.getItem(HIDDEN_CALENDARS_KEY);
+		const raw = globalThis.localStorage?.getItem(key);
 		const parsed: unknown = raw ? JSON.parse(raw) : [];
 		if (!Array.isArray(parsed)) {
 			return new Set();
@@ -37,9 +37,9 @@ export function loadHiddenCalendars(): Set<string> {
  * Guarda qué calendarios se ocultaron. Si no se puede, el filtro vale igual
  * para esta sesión; sólo no se recuerda para la próxima.
  */
-export function saveHiddenCalendars(hidden: Set<string>): void {
+export function saveHiddenCalendars(hidden: Set<string>, key = HIDDEN_CALENDARS_KEY): void {
 	try {
-		globalThis.localStorage?.setItem(HIDDEN_CALENDARS_KEY, JSON.stringify([...hidden]));
+		globalThis.localStorage?.setItem(key, JSON.stringify([...hidden]));
 	} catch {
 		// No recordar la preferencia no rompe nada que se esté viendo ahora.
 	}

@@ -117,7 +117,16 @@ export interface CalendarEvent {
 	 */
 	zone: string;
 	calendar: string;
+	/** El color del **calendario**: la marca del costado cuando el evento no trae el suyo. */
 	color: string | null;
+	/**
+	 * El `COLOR` propio del evento (RFC 7986 §5.9), si lo trae. Es dato del
+	 * servidor y puede ser ilegible: sólo sirve de marca al costado, nunca de
+	 * fondo. Ausente en lecturas viejas y en las que van cuenta por cuenta.
+	 */
+	event_color?: string | null;
+	/** Las `CATEGORIES` del evento. Ausente en lecturas viejas, se toma como vacía. */
+	categories?: string[];
 	/**
 	 * El ETag del evento, cuando el almacén lo entrega. Es lo que hace falta para
 	 * editar (`if_match`), así que mientras no esté el evento sólo se puede ver y

@@ -269,6 +269,8 @@ describe('lo que se usa existe', () => {
 	});
 });
 
+const DATA_COLOR_USE = /\.color\b|\bmarkColor\(/;
+
 describe('los colores salen del esquema', () => {
 	test('ningún color escrito a mano en los componentes', async () => {
 		expect(await findAll(sources('**/*.{vue,ts}'), LITERAL_COLOR)).toEqual([]);
@@ -283,7 +285,8 @@ describe('los colores salen del esquema', () => {
 		// dibujado a mano con un paso más.
 		const found = await findAll(sources('**/*.vue'), STYLE_COLOR);
 		const outside = found.filter((hit) => !DATA_COLOR.some((file) => hit.startsWith(`${file}: `)));
-		const notData = found.filter((hit) => !/\.color\b/.test(hit));
+		// `markColor(event)` es el campo `color` del dato (o `event_color`, el propio del evento).
+		const notData = found.filter((hit) => !DATA_COLOR_USE.test(hit));
 
 		expect(outside).toEqual([]);
 		expect(notData).toEqual([]);
@@ -294,7 +297,7 @@ describe('los colores salen del esquema', () => {
 		// lo próximo que alguien escriba ahí.
 		for (const file of DATA_COLOR) {
 			const text = await read(SOURCE + file);
-			expect(text, `${file} ya no pinta un color de dato`).toMatch(/\.color\b/);
+			expect(text, `${file} ya no pinta un color de dato`).toMatch(DATA_COLOR_USE);
 		}
 	});
 

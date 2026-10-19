@@ -36,6 +36,13 @@ pub struct EventInCalendar {
     pub event: Event,
     pub calendar: String,
     pub color: Option<String>,
+    /// El `COLOR` propio del evento, si lo trae: pisa al del calendario en la
+    /// marca del costado. Sólo lo da el almacén; el camino de cada cuenta no lo
+    /// lee del servidor.
+    pub event_color: Option<String>,
+    /// Las `CATEGORIES` del evento. Vacías en el camino de cada cuenta, por la
+    /// misma razón.
+    pub categories: Vec<String>,
     /// El ETag del evento, para editarlo con precondición (`if_match`). Vacío
     /// cuando el evento no viene del almacén —el camino de cada cuenta lee del
     /// servidor directo, que no da uno que sirva de precondición al almacén— o
@@ -108,6 +115,8 @@ pub async fn account_events<R: tauri::Runtime>(
                         event,
                         calendar: calendario.url.clone(),
                         color: calendario.color.clone(),
+                        event_color: None,
+                        categories: Vec::new(),
                         // Leído del servidor directo: no hay ETag del almacén con
                         // que editar ni cola local que quede pendiente.
                         etag: String::new(),
@@ -350,6 +359,8 @@ mod tests {
             },
             calendar: "https://nube.ejemplo.com/dav/calendars/ana/trabajo/".into(),
             color: Some("#FF5733".into()),
+            event_color: Some("#33AAFF".into()),
+            categories: vec!["Trabajo".into()],
             etag: String::new(),
             sync_state: "synced".into(),
         };
@@ -358,6 +369,10 @@ mod tests {
         // Aplanado: la ventana recibe un objeto y no un evento adentro de otro.
         assert_eq!(json["title"], "Reunión");
         assert_eq!(json["color"], "#FF5733");
+        // El color propio del evento y sus categorías viajan con los nombres
+        // que lee `src/tools/mes.ts`.
+        assert_eq!(json["event_color"], "#33AAFF");
+        assert_eq!(json["categories"], serde_json::json!(["Trabajo"]));
         assert!(json["calendar"].as_str().unwrap().ends_with("/trabajo/"));
         // El estado de sincronización viaja aplanado, con el nombre que lee la
         // ventana.
