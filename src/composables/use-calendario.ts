@@ -9,6 +9,12 @@ import {
 	syncStatus,
 } from '@vasakgroup/plugin-vsk-store';
 import { computed, onScopeDispose, ref, watch } from 'vue';
+import {
+	filterByCalendars,
+	loadHiddenCalendars,
+	saveHiddenCalendars,
+	toggleCalendar,
+} from '@/tools/calendar-filter';
 import { splitGlobalId } from '@/tools/event-form';
 import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
 import {
@@ -212,7 +218,20 @@ export function useCalendario() {
 
 	/** Los días que la vista muestra y que acotan lo que se le pide al almacén. */
 	const dias = computed(() => viewDays(view.value, anchor.value, zona.value, hoy.value));
-	const eventosPorDia = computed(() => eventsByDay(eventos.value, dias.value, zona.value));
+	/**
+	 * Los calendarios que la persona apagó, por URL. Filtra sólo lo que se
+	 * dibuja: `eventos` y `calendarios` siguen enteros, para que la casilla de un
+	 * calendario oculto siga en la lista y para poder crear en él.
+	 */
+	const hiddenCalendars = ref<Set<string>>(loadHiddenCalendars());
+	const visibleEvents = computed(() => filterByCalendars(eventos.value, hiddenCalendars.value));
+	const eventosPorDia = computed(() => eventsByDay(visibleEvents.value, dias.value, zona.value));
+
+	/** Oculta el calendario, o lo vuelve a mostrar, y lo recuerda. */
+	function toggleCalendarVisibility(url: string) {
+		hiddenCalendars.value = toggleCalendar(hiddenCalendars.value, url);
+		saveHiddenCalendars(hiddenCalendars.value);
+	}
 
 	/** Los eventos de un día de la cuadrícula. */
 	function eventsOf(clave: string): CalendarEvent[] {
@@ -694,6 +713,8 @@ export function useCalendario() {
 		cuentas,
 		calendarios,
 		eventos,
+		hiddenCalendars,
+		toggleCalendarVisibility,
 		cargando,
 		avisos,
 		sinPermiso,
