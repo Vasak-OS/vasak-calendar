@@ -15,6 +15,13 @@ import {
 	saveHiddenCalendars,
 	toggleCalendar,
 } from '@/tools/calendar-filter';
+import {
+	categoriesIn,
+	filterByCategories,
+	loadHiddenCategories,
+	saveHiddenCategories,
+	toggleCategory,
+} from '@/tools/event-categories';
 import { splitGlobalId } from '@/tools/event-form';
 import { type CalendarEvent, eventsByDay, primeroDelMes, rangoDe } from '@/tools/mes';
 import {
@@ -224,13 +231,33 @@ export function useCalendario() {
 	 * calendario oculto siga en la lista y para poder crear en él.
 	 */
 	const hiddenCalendars = ref<Set<string>>(loadHiddenCalendars());
-	const visibleEvents = computed(() => filterByCalendars(eventos.value, hiddenCalendars.value));
+	/**
+	 * Las categorías que la persona apagó. Se filtran **después** de los
+	 * calendarios y la lista de casillas sale de lo que dejó el filtro de
+	 * calendarios **antes** de éste: así la casilla de una categoría apagada
+	 * sigue a la vista para volver a prenderla, y las categorías de un calendario
+	 * oculto no aparecen.
+	 */
+	const hiddenCategories = ref<Set<string>>(loadHiddenCategories());
+	const ofVisibleCalendars = computed(() =>
+		filterByCalendars(eventos.value, hiddenCalendars.value)
+	);
+	const categories = computed(() => categoriesIn(ofVisibleCalendars.value));
+	const visibleEvents = computed(() =>
+		filterByCategories(ofVisibleCalendars.value, hiddenCategories.value)
+	);
 	const eventosPorDia = computed(() => eventsByDay(visibleEvents.value, dias.value, zona.value));
 
 	/** Oculta el calendario, o lo vuelve a mostrar, y lo recuerda. */
 	function toggleCalendarVisibility(url: string) {
 		hiddenCalendars.value = toggleCalendar(hiddenCalendars.value, url);
 		saveHiddenCalendars(hiddenCalendars.value);
+	}
+
+	/** Oculta la categoría, o la vuelve a mostrar, y la recuerda. */
+	function toggleCategoryVisibility(name: string) {
+		hiddenCategories.value = toggleCategory(hiddenCategories.value, name);
+		saveHiddenCategories(hiddenCategories.value);
 	}
 
 	/** Los eventos de un día de la cuadrícula. */
@@ -715,6 +742,9 @@ export function useCalendario() {
 		eventos,
 		hiddenCalendars,
 		toggleCalendarVisibility,
+		categories,
+		hiddenCategories,
+		toggleCategoryVisibility,
 		cargando,
 		avisos,
 		sinPermiso,

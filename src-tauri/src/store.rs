@@ -101,6 +101,13 @@ pub struct StoredOccurrence {
     pub all_day: bool,
     #[serde(default)]
     pub color: Option<String>,
+    /// El `COLOR` propio del evento (RFC 7986 §5.9), distinto del de su
+    /// calendario. Un almacén que no lo manda lo deja en `None`.
+    #[serde(default)]
+    pub event_color: Option<String>,
+    /// Las `CATEGORIES` del evento. Un almacén que no las manda las deja vacías.
+    #[serde(default)]
+    pub categories: Vec<String>,
     /// Si el evento es de una serie. Las versiones del almacén que no lo
     /// mandan lo dejan en `false`: se pierde el ícono, no el evento.
     #[serde(default)]
@@ -182,6 +189,8 @@ pub fn event_from(o: StoredOccurrence) -> EventInCalendar {
         },
         calendar: o.calendar_id,
         color: o.color,
+        event_color: o.event_color,
+        categories: o.categories,
         etag: o.etag,
         sync_state: o.sync_state,
     }
@@ -774,6 +783,22 @@ mod tests {
         assert_eq!(evento.sync_state, "pending");
     }
 
+    /// El color propio del evento y sus categorías llegan hasta la ventana; un
+    /// almacén que no los manda las deja en `None` y vacías.
+    #[test]
+    fn el_evento_guardado_lleva_su_color_y_sus_categorias() {
+        let mut json = new_occurrence("google/42", false, false);
+        json["event_color"] = "#33AAFF".into();
+        json["categories"] = serde_json::json!(["Trabajo", "Casa"]);
+        let evento = event_from(serde_json::from_value(json).unwrap());
+        assert_eq!(evento.event_color.as_deref(), Some("#33AAFF"));
+        assert_eq!(evento.categories, vec!["Trabajo", "Casa"]);
+
+        let viejo = event_from(serde_json::from_value(old_occurrence("google/42")).unwrap());
+        assert_eq!(viejo.event_color, None);
+        assert!(viejo.categories.is_empty());
+    }
+
     /// Con un almacén de antes de `recurring` y `shown_once`, el evento se ve
     /// igual: se pierde el ícono de la serie, no el evento. El `etag` queda
     /// vacío y el `sync_state` en `synced`, así que editar sigue en pausa y no
@@ -839,9 +864,11 @@ mod tests {
             [
                 "all_day",
                 "calendar",
+                "categories",
                 "color",
                 "end",
                 "etag",
+                "event_color",
                 "recurring",
                 "shown_once",
                 "start",

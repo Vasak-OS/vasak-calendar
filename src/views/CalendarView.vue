@@ -42,6 +42,9 @@ const {
 	calendarios,
 	hiddenCalendars,
 	toggleCalendarVisibility,
+	categories,
+	hiddenCategories,
+	toggleCategoryVisibility,
 	cargando,
 	avisos,
 	sinPermiso,
@@ -387,6 +390,8 @@ onMounted(async () => {
       :accounts="cuentas"
       :calendars="calendarios"
       :hidden-calendars="hiddenCalendars"
+      :categories="categories"
+      :hidden-categories="hiddenCategories"
       :notices="avisos"
       :sync-statuses="syncStatuses"
       :refresh-failures="refreshFailures"
@@ -396,6 +401,7 @@ onMounted(async () => {
       :foreign-zone="zonaAjena"
       @choose-zone="elegirZona"
       @toggle-calendar="toggleCalendarVisibility"
+      @toggle-category="toggleCategoryVisibility"
       @forward="go('month')" />
 
     <!-- La columna principal: el selector de vista arriba, y debajo la vista

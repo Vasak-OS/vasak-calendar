@@ -25,6 +25,10 @@ const props = defineProps<{
 	calendars: Calendario[];
 	/** Las URL de los calendarios que la persona apagó. */
 	hiddenCalendars?: Set<string>;
+	/** Las categorías que aparecen en lo que se está mirando. */
+	categories?: string[];
+	/** Las categorías que la persona apagó. */
+	hiddenCategories?: Set<string>;
 	notices: string[];
 	zone: string;
 	chosenZone: string;
@@ -38,6 +42,8 @@ const emit = defineEmits<{
 	chooseZone: [zone: string];
 	/** Ocultar o volver a mostrar un calendario, por su URL. */
 	toggleCalendar: [url: string];
+	/** Ocultar o volver a mostrar una categoría, por su nombre. */
+	toggleCategory: [name: string];
 	/** Volver al mes, con la ventana angosta. */
 	forward: [];
 }>();
@@ -155,6 +161,23 @@ function textOf(line: SyncLine): string {
               :label="calendar.nombre"
               :model-value="!hiddenCalendars?.has(calendar.url)"
               @change="emit('toggleCalendar', calendar.url)" />
+          </li>
+        </ul>
+      </section>
+
+      <!-- Las categorías **que aparecen en lo que se está mirando**, no todas las
+           que existen: una lista de las que no están en pantalla no filtra nada.
+           Sin marca de color, porque la categoría no tiene. Marcada = se ve; un
+           evento sin categoría se ve siempre. -->
+      <section v-if="categories && categories.length > 0" class="flex flex-col gap-2">
+        <SectionHeading as="h2" :title="t('cuentas.categorias')" />
+        <ul class="flex flex-col gap-1">
+          <li v-for="category in categories" :key="category" class="flex min-w-0 items-center">
+            <Checkbox
+              class="min-w-0"
+              :label="category"
+              :model-value="!hiddenCategories?.has(category)"
+              @change="emit('toggleCategory', category)" />
           </li>
         </ul>
       </section>

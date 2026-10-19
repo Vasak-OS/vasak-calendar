@@ -4,6 +4,7 @@ import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
 import EventMarks from '@/components/calendar/EventMarks.vue';
 import SyncBadge from '@/components/calendar/SyncBadge.vue';
+import { markColor } from '@/tools/event-categories';
 import { claveSegunCantidad, interpolar } from '@/tools/interpolar';
 import type { CalendarEvent, Dia } from '@/tools/mes';
 import type { DayRangeProps } from '@/tools/views';
@@ -208,7 +209,7 @@ function overflowSummary(count: number): string {
                 :key="`${event.uid}-${event.start}`"
                 class="flex min-w-0 items-center gap-1 truncate rounded-corner-xs bg-ui-surface/60 px-1 py-0.5 text-xs"
                 :title="descriptionOf(event)">
-                <!-- El color del calendario, como una marca al costado y no como
+                <!-- El color del evento si trae el suyo y si no el de su calendario, como una marca al costado y no como
                      fondo del evento: de fondo, un color cualquiera del servidor
                      puede dejar el texto ilegible, y no hay forma de saber de
                      antemano si es claro u oscuro.
@@ -218,7 +219,7 @@ function overflowSummary(count: number): string {
                      color, el acento. -->
                 <span
                   class="h-3 w-1 shrink-0 rounded-corner-full"
-                  :style="{ backgroundColor: event.color ?? 'var(--color-primary)' }"
+                  :style="{ backgroundColor: markColor(event) ?? 'var(--color-primary)' }"
                   aria-hidden="true"
                   data-testid="event-color"></span>
                 <span class="sr-only">{{ descriptionOf(event) }}</span>

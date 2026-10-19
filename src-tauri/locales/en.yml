@@ -30,6 +30,7 @@ calendario:
 cuentas:
   titulo: Accounts
   calendarios: Calendars
+  categorias: Categories
   sinCuentasTitulo: No calendars yet
   sinCuentasDescripcion: Connect an account from Settings and its calendars will show up here.
   necesitaReconectarse: It needs to be connected again from Settings

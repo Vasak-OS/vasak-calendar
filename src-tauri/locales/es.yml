@@ -42,6 +42,7 @@ calendario:
 cuentas:
   titulo: Cuentas
   calendarios: Calendarios
+  categorias: Categorías
   sinCuentasTitulo: Todavía no hay ningún calendario
   sinCuentasDescripcion: Conectá una cuenta desde Configuración y sus calendarios aparecen acá.
   necesitaReconectarse: Hay que volver a conectarla desde Configuración
