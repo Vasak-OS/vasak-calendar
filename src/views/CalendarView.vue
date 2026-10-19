@@ -40,6 +40,8 @@ const {
 	dias,
 	cuentas,
 	calendarios,
+	hiddenCalendars,
+	toggleCalendarVisibility,
 	cargando,
 	avisos,
 	sinPermiso,
@@ -384,6 +386,7 @@ onMounted(async () => {
       :class="paneClass('accounts', pane)"
       :accounts="cuentas"
       :calendars="calendarios"
+      :hidden-calendars="hiddenCalendars"
       :notices="avisos"
       :sync-statuses="syncStatuses"
       :refresh-failures="refreshFailures"
@@ -392,6 +395,7 @@ onMounted(async () => {
       :system-zone="zonaDelSistema"
       :foreign-zone="zonaAjena"
       @choose-zone="elegirZona"
+      @toggle-calendar="toggleCalendarVisibility"
       @forward="go('month')" />
 
     <!-- La columna principal: el selector de vista arriba, y debajo la vista

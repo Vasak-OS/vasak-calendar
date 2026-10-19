@@ -9,6 +9,7 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
 	AlertMessage,
+	Checkbox,
 	EmptyState,
 	Panel,
 	SectionHeading,
@@ -22,6 +23,8 @@ import { NARROW_ONLY } from '@/tools/narrow-layout';
 const props = defineProps<{
 	accounts: Cuenta[];
 	calendars: Calendario[];
+	/** Las URL de los calendarios que la persona apagó. */
+	hiddenCalendars?: Set<string>;
 	notices: string[];
 	zone: string;
 	chosenZone: string;
@@ -33,6 +36,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
 	chooseZone: [zone: string];
+	/** Ocultar o volver a mostrar un calendario, por su URL. */
+	toggleCalendar: [url: string];
 	/** Volver al mes, con la ventana angosta. */
 	forward: [];
 }>();
@@ -138,12 +143,18 @@ function textOf(line: SyncLine): string {
             class="flex min-w-0 items-center gap-2">
             <!-- El color de cada calendario es **dato del servidor**, no del
                  esquema: va como `color` del punto, que lo pone por `style`
-                 (la excepción de la guardia). Sin color, el acento. -->
+                 (la excepción de la guardia). Sin color, el acento. El nombre
+                 va siempre: dos calendarios del mismo color son comunes, y la
+                 marca sola no dice cuál es cuál. Marcada = se ve. -->
             <StatusDot
               size="md"
               tone="accent"
               :color="calendar.color ?? undefined" />
-            <span class="truncate text-sm" :title="calendar.nombre">{{ calendar.nombre }}</span>
+            <Checkbox
+              class="min-w-0"
+              :label="calendar.nombre"
+              :model-value="!hiddenCalendars?.has(calendar.url)"
+              @change="emit('toggleCalendar', calendar.url)" />
           </li>
         </ul>
       </section>
