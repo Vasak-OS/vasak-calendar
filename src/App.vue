@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted, onUnmounted, type Ref, ref } from 'vue';
@@ -12,6 +13,10 @@ let unListenConfig: Ref<UnlistenFn | null> = ref(null);
 // unos instantes con el tema claro, que es a lo que cae la hoja de estilo cuando
 // no hay ninguna. Lo que queda acá es escuchar los cambios de después.
 onMounted(async () => {
+	// Afina el WebKit de la ventana (menos caché, sin extras de desarrollo) para
+	// bajar su consumo de memoria. Sin bloquear el montaje ni romper en el navegador.
+	invoke('tune_webview').catch(() => {});
+
 	try {
 		const configStore = useConfigStore();
 

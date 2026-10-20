@@ -1,6 +1,6 @@
 [package]
 name = "vasak-calendar"
-version = "0.22.0"
+version = "0.22.1"
 description = "El calendario de VasakOS"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -32,6 +32,9 @@ tauri-plugin-shell = "2"
 
 # Para la ventana sin decoración: la barra propia necesita mover y redimensionar.
 gtk = "0.18"
+# Para afinar el WebKit de la ventana (ver `commands/webkit.rs`). No agrega ninguna
+# biblioteca de sistema: libwebkit2gtk ya la enlaza la app Tauri.
+webkit2gtk = "2.0"
 tauri-plugin-vsk-journal = "2"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 # El `StreamExt` de los avisos de cambio de zona: zbus 5 ya no lo reexporta.
