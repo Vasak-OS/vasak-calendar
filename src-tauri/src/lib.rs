@@ -5,6 +5,7 @@
 
 mod caldav;
 mod comandos;
+mod commands;
 mod cuentas;
 mod dav;
 mod locales;
@@ -57,6 +58,7 @@ pub fn run() {
             comandos::resolve_conflict,
             store_access::request_calendar_access_again,
             reloj::zona_del_sistema,
+            commands::webkit::tune_webview,
         ])
         // El aviso de que la máquina cambió de huso. Va acá y no en la ventana
         // porque el motor de JavaScript se queda con la zona que leyó al
