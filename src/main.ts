@@ -9,7 +9,7 @@ import { createApp } from 'vue';
 import App from '@/App.vue';
 import { esperarArranque } from '@/tools/arranque';
 import { sanearUrl } from '@/tools/csp';
-import { guardarTema } from '@/tools/tema-cache';
+import { saveTheme } from '@/tools/theme-cache';
 import '@/assets/main.css';
 
 /**
@@ -104,7 +104,7 @@ if (!arranqueCompleto) {
 // desde el primer dibujo (el script del `<head>` de `index.html` lo reaplica). Si
 // el plazo venció, el tema todavía no está puesto y se guardaría el de por
 // omisión encima del bueno: ahí no se guarda.
-if (arranqueCompleto) guardarTema();
+if (arranqueCompleto) saveTheme();
 
 app.mount('#app');
 
