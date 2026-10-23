@@ -9,6 +9,7 @@ import { createApp } from 'vue';
 import App from '@/App.vue';
 import { esperarArranque } from '@/tools/arranque';
 import { sanearUrl } from '@/tools/csp';
+import { guardarTema } from '@/tools/tema-cache';
 import '@/assets/main.css';
 
 /**
@@ -98,6 +99,12 @@ if (!arranqueCompleto) {
 			'lo que haya, y puede mostrar las claves sin traducir o el tema por omisión.'
 	);
 }
+
+// Con el tema ya aplicado, se guarda para que el próximo arranque pinte con él
+// desde el primer dibujo (el script del `<head>` de `index.html` lo reaplica). Si
+// el plazo venció, el tema todavía no está puesto y se guardaría el de por
+// omisión encima del bueno: ahí no se guarda.
+if (arranqueCompleto) guardarTema();
 
 app.mount('#app');
 
