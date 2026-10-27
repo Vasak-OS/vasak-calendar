@@ -18,7 +18,7 @@
  * - que «Hoy» lleva la lista al día de hoy.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { compile } from '@tailwindcss/node';
 import {
 	EmptyState,
@@ -47,6 +47,7 @@ import { calendarEvent as event } from './fixtures/events';
 
 let mounted: VueWrapper | null = null;
 const realOffsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+const realScrollTo = HTMLElement.prototype.scrollTo;
 
 afterEach(() => {
 	mounted?.unmount();
@@ -54,6 +55,8 @@ afterEach(() => {
 	document.body.innerHTML = '';
 	olvidarTodo();
 	if (realOffsetTop) Object.defineProperty(HTMLElement.prototype, 'offsetTop', realOffsetTop);
+	HTMLElement.prototype.scrollTo = realScrollTo;
+	setSystemTime();
 	try {
 		localStorage.clear();
 	} catch {
@@ -299,8 +302,17 @@ function viewWithEvents() {
 	return mounted;
 }
 
+/**
+ * «Hoy» fijo en mitad de mes. Con la fecha del sistema, la cuadrícula del mes
+ * que viene arranca unos días antes de su primero y puede contener a hoy: la
+ * prueba de «el mes siguiente no tiene a hoy» fallaba según el día en que se
+ * corriera (a fin de mes, sí).
+ */
+const MID_MONTH = new Date('2026-10-15T12:00:00Z');
+
 describe('«Hoy» y la selección', () => {
 	test('«Hoy» lleva el mes a hoy y la lista al día de hoy', async () => {
+		setSystemTime(MID_MONTH);
 		// happy-dom no maqueta: cada día dice estar a «número del día × 100» px
 		// del principio de la lista, para saber adónde se la llevó.
 		Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
@@ -311,9 +323,11 @@ describe('«Hoy» y la selección', () => {
 		});
 		const wrapper = viewWithEvents();
 		await flush();
-		const list = wrapper.get('[data-testid="month-agenda"]').element as HTMLElement;
+		// La lista que se lleva a hoy es la del mes nuevo —el período se remonta al
+		// cambiar—, que todavía no existe: el doble va en el prototipo, no en una lista.
 		const calls: ScrollToOptions[] = [];
-		list.scrollTo = ((options: ScrollToOptions) => void calls.push(options)) as typeof list.scrollTo;
+		HTMLElement.prototype.scrollTo = ((options: ScrollToOptions) =>
+			void calls.push(options)) as typeof HTMLElement.prototype.scrollTo;
 
 		const strip = wrapper.get('[data-pane="month"]');
 		const nav = strip.findComponent(MonthNavigation);
@@ -326,6 +340,7 @@ describe('«Hoy» y la selección', () => {
 		expect(today).toBeUndefined();
 
 		const todayButton = strip.findAll('button').find((b) => b.text() === 'calendario.hoy');
+		calls.length = 0;
 		await todayButton?.trigger('click');
 		await flush();
 
@@ -339,12 +354,15 @@ describe('«Hoy» y la selección', () => {
 	test('al ensanchar se ve el mismo mes, la misma zona y la misma columna', async () => {
 		const wrapper = viewWithEvents();
 		await flush();
-		const agenda = wrapper.findComponent(MonthAgenda);
-		const grid = wrapper.findComponent(MonthGrid);
 
 		// En la ventana angosta: otro mes, otra zona y el panel de cuentas.
 		const strip = wrapper.get('[data-pane="month"]');
 		await strip.findComponent(MonthNavigation).get('[aria-label="calendario.mesSiguiente"]').trigger('click');
+		await flush();
+		// Cambiar de mes remonta el período (`:key` del título): las dos vistas se
+		// toman del mes nuevo, ya montado.
+		const agenda = wrapper.findComponent(MonthAgenda);
+		const grid = wrapper.findComponent(MonthGrid);
 		wrapper.findComponent(AccountsPanel).vm.$emit('chooseZone', 'Europe/Madrid');
 		await strip.get('[data-nav="month"] button').trigger('click');
 		await flush();

@@ -3,9 +3,12 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
 	EmptyState,
+	RevealTransition,
 	SegmentedControl,
 	type SegmentedOption,
+	SlideTransition,
 	ThemeIcon,
+	type TransitionSide,
 } from '@vasakgroup/vue-libvasak';
 import { computed, nextTick, onMounted, ref } from 'vue';
 import AccountsPanel from '@/components/calendar/AccountsPanel.vue';
@@ -252,6 +255,24 @@ async function go(next: Pane) {
 }
 
 /**
+ * De qué lado entra el período nuevo al cambiar de mes, semana o día:
+ * adelante entra por la derecha y atrás por la izquierda, y el que se va sale
+ * hacia el lado contrario. Se fija **en el mismo turno** que se mueve el foco,
+ * para que el `Transition` que está saliendo ya lo lea.
+ */
+const slideFrom = ref<TransitionSide>('right');
+
+function onPrevious() {
+	slideFrom.value = 'left';
+	void goPrevious();
+}
+
+function onNext() {
+	slideFrom.value = 'right';
+	void goNext();
+}
+
+/**
  * Las listas que se pueden llevar al día de hoy: el mes como agenda —con la
  * ventana angosta— y la vista de agenda. Las dos son `MonthAgenda`, y sólo una
  * existe por vez según la vista.
@@ -272,9 +293,25 @@ function scrollListToToday() {
  * la carga, y la lista no está hasta que la vista se volvió a dibujar.
  */
 async function onToday() {
+	const before = title.value;
+	slideFrom.value = new Date() >= anchor.value ? 'right' : 'left';
+	// Si cambia de período, la lista nueva todavía no existe —entra cuando
+	// termina de salir la vieja— y se lleva a hoy al aparecer (`onPeriodEnter`, al montarse).
+	scrollOnEnter = true;
 	await goToToday();
 	await nextTick();
-	scrollListToToday();
+	if (title.value === before) {
+		scrollOnEnter = false;
+		scrollListToToday();
+	}
+}
+
+/** Ver `onToday`. */
+let scrollOnEnter = false;
+function onPeriodEnter() {
+	if (!scrollOnEnter) return;
+	scrollOnEnter = false;
+	void nextTick(scrollListToToday);
 }
 
 onMounted(async () => {
@@ -339,8 +376,8 @@ onMounted(async () => {
         <MonthNavigation
           :title="title"
           v-bind="navLabels"
-          @previous="goPrevious()"
-          @next="goNext()" />
+          @previous="onPrevious()"
+          @next="onNext()" />
         <ActionButton
           variant="secondary"
           size="sm"
@@ -354,10 +391,12 @@ onMounted(async () => {
          formulario; reusa el badge, el conflicto y el «sin permiso» del
          calendario. Comparte la zona de la agenda y el volver a pedir el permiso,
          que es el mismo del área. -->
+    <RevealTransition mode="out-in">
     <TasksView v-if="mode === 'tasks'" :zone="zona" :reask="pedirPermisoDeNuevo" />
 
-    <!-- El calendario. -->
-    <template v-else>
+    <!-- El calendario. Una sola caja con la misma fila que la ventana, para que
+         el cambio de parte tenga un único elemento que entrar y salir. -->
+    <div v-else class="flex min-h-0 min-w-0 flex-1 gap-1">
     <!-- Sin permiso para leer el almacén, el calendario queda vacío y sin
          salida: en vez de la cuadrícula y el panel vacíos, un estado que lo dice
          y el botón que vuelve a abrir el diálogo. Ocupa la fila entera, así que
@@ -441,49 +480,67 @@ onMounted(async () => {
             v-bind="navLabels"
             class="col-span-3 row-start-2 @min-[22rem]/strip:col-span-1 @min-[22rem]/strip:col-start-2 @min-[22rem]/strip:row-start-1"
             :title="title"
-            @previous="goPrevious()"
-            @next="goNext()" />
+            @previous="onPrevious()"
+            @next="onNext()" />
         </div>
       </div>
 
-      <!-- La vista elegida. El mes muestra la cuadrícula con la ventana ancha y
-           la agenda con la angosta (siete columnas de 30 px cortan los eventos);
-           las demás vistas se acomodan solas a cualquier ancho. -->
-      <template v-if="view === 'month'">
-        <MonthGrid :class="WIDE_ONLY" :days="dias" :zone="zona" :events-of="eventsOf" />
-        <MonthAgenda
-          ref="monthAgenda"
-          :class="NARROW_ONLY"
-          :days="dias"
-          :zone="zona"
-          :events-of="eventsOf"
-          @open="openEvent" />
-      </template>
-      <ColumnsView
-        v-else-if="view === 'day' || view === 'days' || view === 'week'"
-        :days="dias"
-        :zone="zona"
-        :events-of="eventsOf"
-        @open="openEvent" />
-      <YearView
-        v-else-if="view === 'year'"
-        :year="yearNumber"
-        :zone="zona"
-        :events-of="eventsOf"
-        @select-day="(fecha) => show(fecha, 'day')"
-        @select-month="(fecha) => show(fecha, 'month')" />
-      <!-- La agenda como vista propia es la misma lista del mes angosto
-           (`MonthAgenda`), ahora con cualquier ancho. -->
-      <MonthAgenda
-        v-else
-        ref="agendaView"
-        :days="dias"
-        :zone="zona"
-        :events-of="eventsOf"
-        @open="openEvent" />
+      <!-- Cambiar de vista (día, semana, mes, año, agenda) es un cambio de
+           sección: sale una y entra la otra. Dentro, cambiar de período con las
+           flechas desliza hacia el lado de la flecha. Las dos `Transition` dejan
+           salir lo viejo tal como estaba (se desmonta al cambiar la clave), así
+           que la vista que se va no se vacía al llegar los eventos del período
+           nuevo. -->
+      <RevealTransition mode="out-in">
+        <div :key="view" class="flex min-h-0 min-w-0 flex-1 flex-col">
+          <SlideTransition :direction="slideFrom" mode="out-in">
+            <div
+              :key="title"
+              class="flex min-h-0 min-w-0 flex-1 flex-col"
+              @vue:mounted="onPeriodEnter">
+              <!-- La vista elegida. El mes muestra la cuadrícula con la ventana ancha y
+                   la agenda con la angosta (siete columnas de 30 px cortan los eventos);
+                   las demás vistas se acomodan solas a cualquier ancho. -->
+              <template v-if="view === 'month'">
+                <MonthGrid :class="WIDE_ONLY" :days="dias" :zone="zona" :events-of="eventsOf" />
+                <MonthAgenda
+                  ref="monthAgenda"
+                  :class="NARROW_ONLY"
+                  :days="dias"
+                  :zone="zona"
+                  :events-of="eventsOf"
+                  @open="openEvent" />
+              </template>
+              <ColumnsView
+                v-else-if="view === 'day' || view === 'days' || view === 'week'"
+                :days="dias"
+                :zone="zona"
+                :events-of="eventsOf"
+                @open="openEvent" />
+              <YearView
+                v-else-if="view === 'year'"
+                :year="yearNumber"
+                :zone="zona"
+                :events-of="eventsOf"
+                @select-day="(fecha) => show(fecha, 'day')"
+                @select-month="(fecha) => show(fecha, 'month')" />
+              <!-- La agenda como vista propia es la misma lista del mes angosto
+                   (`MonthAgenda`), ahora con cualquier ancho. -->
+              <MonthAgenda
+                v-else
+                ref="agendaView"
+                :days="dias"
+                :zone="zona"
+                :events-of="eventsOf"
+                @open="openEvent" />
+            </div>
+          </SlideTransition>
+        </div>
+      </RevealTransition>
     </div>
     </template>
-    </template>
+    </div>
+    </RevealTransition>
 
     <!-- El formulario de crear / editar / borrar, flotante dentro de la ventana.
          Vive fuera del `v-if`/`v-else` de arriba para que no se desmonte al
