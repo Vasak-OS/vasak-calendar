@@ -1,7 +1,7 @@
 {
   "name": "vasak-calendar",
   "private": true,
-  "version": "0.22.6",
+  "version": "0.22.7",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -21,7 +21,7 @@
     "@vasakgroup/plugin-vicons": "^2.2.2",
     "@vasakgroup/plugin-vsk-contextual-menu": "^2.0.3",
     "@vasakgroup/plugin-vsk-journal": "^2.0.1",
-    "@vasakgroup/plugin-vsk-store": "0.3.0",
+    "@vasakgroup/plugin-vsk-store": "0.4.0",
     "@vasakgroup/tauri-plugin-i18n": "^2.3.1",
     "@vasakgroup/vue-libvasak": "^2.21.1",
     "pinia": "^3.0.4",
@@ -47,7 +47,7 @@
       "pinia": "La 4 es un salto mayor del andamiaje que comparten catorce aplicaciones del taller (decisión en vasak-file-manager#90): va en su propio PR, coordinado con el resto. Se saca cuando el taller entero pase a pinia 4.",
       "typescript": "La 7 es el compilador nativo y no trae `typescript/lib/tsc`, que vue-tsc 3.3 busca ahí: el typecheck se cae antes de mirar un archivo. Se saca cuando vue-tsc declare soporte de TypeScript 7.",
       "reqwest (crate de Rust)": "Se queda en 0.12, la misma que usa el servicio vasak-accounts (oauth2 5 todavía pide ^0.12), y en 0.13 el TLS de rustls pasa a aws-lc-rs, que se compila en C. Se saca cuando vasak-accounts suba a 0.13.",
-      "zbus (crate de Rust)": "Se queda en 5: tauri-plugin-vsk-store 0.3.0 pide zbus 5, y subir sólo acá compila (con la feature `proxy`, que en la 6 ya no viene por omisión) pero deja dos copias de zbus conviviendo en el binario. Se saca cuando el plugin suba a zbus 6.",
+      "zbus (crate de Rust)": "Se queda en 5: tauri-plugin-vsk-store 0.4.0 pide zbus 5, y subir sólo acá compila (con la feature `proxy`, que en la 6 ya no viene por omisión) pero deja dos copias de zbus conviviendo en el binario. Se saca cuando el plugin suba a zbus 6.",
       "gtk (crate de Rust)": "Va atado a la 0.18 que usan tauri y webkit2gtk: otra versión metería una segunda copia de los enlaces a GTK. Se saca cuando tauri suba de gtk-rs."
     }
   }
