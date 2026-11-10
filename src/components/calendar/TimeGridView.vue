@@ -16,8 +16,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import EventMarks from '@/components/calendar/EventMarks.vue';
-import SyncBadge from '@/components/calendar/SyncBadge.vue';
+import EventLabel from '@/components/calendar/EventLabel.vue';
 import { eventSpanOn } from '@/tools/agenda';
 import { markColor } from '@/tools/event-categories';
 import { interpolar } from '@/tools/interpolar';
@@ -114,10 +113,6 @@ function descriptionOf(event: CalendarEvent, dayKey: string): string {
 		: base;
 }
 
-function hasMarks(event: CalendarEvent): boolean {
-	return event.recurring || (!!event.zone && event.zone !== props.zone);
-}
-
 function blockStyle(p: { startMin: number; endMin: number; column: number; columns: number }) {
 	return {
 		top: `${p.startMin * PX_PER_MINUTE}px`,
@@ -191,9 +186,7 @@ const gutter = { scrollbarGutter: 'stable' };
                   class="h-3 w-1 shrink-0 rounded-corner-full"
                   :style="{ backgroundColor: markColor(event) ?? 'var(--color-primary)' }"
                   aria-hidden="true"></span>
-                <span class="truncate" aria-hidden="true">{{ titleOf(event) }}</span>
-                <EventMarks v-if="hasMarks(event)" :event="event" :zone="zone" :size="12" />
-                <SyncBadge :event="event" compact />
+                <EventLabel :event="event" :zone="zone" />
               </button>
             </div>
           </div>
@@ -244,9 +237,7 @@ const gutter = { scrollbarGutter: 'stable' };
                     aria-hidden="true"
                     data-testid="event-color"></span>
                   <span class="flex min-w-0 items-center gap-1 pl-1" aria-hidden="true">
-                    <span class="truncate font-semibold">{{ titleOf(p.event) }}</span>
-                    <EventMarks v-if="hasMarks(p.event)" :event="p.event" :zone="zone" :size="12" />
-                    <SyncBadge :event="p.event" compact />
+                    <EventLabel :event="p.event" :zone="zone" bold />
                   </span>
                   <span class="truncate pl-1 text-tx-muted tabular-nums" aria-hidden="true">
                     {{ timeOf(p.event, day.clave) }}
