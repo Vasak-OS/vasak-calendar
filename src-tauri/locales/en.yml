@@ -107,6 +107,17 @@ editor:
   faltaCalendario: Choose a calendar.
   fechaInvalida: Check the dates.
   rangoInvalido: The event ends before it starts.
+# Who organizes an event and who is going: display only.
+invitaciones:
+  titulo: Invitations
+  organiza: "Organizer: {0}"
+  cargando: Looking up invitations…
+  noSePudo: Could not fetch the invitations.
+  aceptado: Accepted
+  rechazado: Declined
+  pendiente: Pending
+  tentativo: Tentative
+  sinEstado: —
 # The per-event sync indicator, in the month, agenda and columns views.
 sincronizacion:
   pendiente: Not synced

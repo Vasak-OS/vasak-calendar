@@ -29,13 +29,21 @@ import {
 	DialogHeader,
 	DialogTitle,
 	FormGroup,
+	ListGroup,
+	ListRow,
 	SelectField,
+	StatusDot,
 	SwitchRow,
 	TextArea,
 	TextInput,
 } from '@vasakgroup/vue-libvasak';
 import { computed, reactive, ref, watch } from 'vue';
-import type { Calendario } from '@/composables/use-calendario';
+import {
+	type Calendario,
+	type EventDetail,
+	getEvent,
+	type Person,
+} from '@/composables/use-calendario';
 import { buildCreate, buildEdit, type EventFormState } from '@/tools/event-form';
 import { isoToDatePicker, isoToDateTimePicker } from '@/tools/ical-date';
 import { type CalendarEvent, canEditEvent, isConflict } from '@/tools/mes';
@@ -96,6 +104,10 @@ const form = reactive<EventFormState>({
 /** Lo que falta, como clave de i18n. Se limpia al tocar cualquier cosa. */
 const localError = ref('');
 
+/** Invitaciones del evento abierto: se piden aparte y sólo se muestran. */
+const detail = ref<EventDetail | null>(null);
+const detailState = ref<'idle' | 'loading' | 'error'>('idle');
+
 /** Si está pidiendo confirmación para borrar. */
 const confirmingDelete = ref(false);
 
@@ -145,8 +157,11 @@ watch(
 		}
 		localError.value = '';
 		confirmingDelete.value = false;
+		detail.value = null;
+		detailState.value = 'idle';
 		if (props.mode === 'edit' && props.event) {
 			fillFrom(props.event);
+			void loadDetail(props.event.uid);
 		} else {
 			fillBlank();
 		}
@@ -186,6 +201,45 @@ function fillFrom(event: CalendarEvent) {
 	}
 	form.location = '';
 	form.description = '';
+}
+
+/** Invitaciones del evento abierto: se piden aparte y sólo se muestran. */
+
+const STATUS: Record<string, { key: string; tone: 'success' | 'error' | 'warning' | 'neutral' }> = {
+	accepted: { key: 'invitaciones.aceptado', tone: 'success' },
+	declined: { key: 'invitaciones.rechazado', tone: 'error' },
+	'needs-action': { key: 'invitaciones.pendiente', tone: 'neutral' },
+	tentative: { key: 'invitaciones.tentativo', tone: 'warning' },
+};
+
+/** El estado del PARTSTAT como texto traducido y tono; vacío o desconocido es «—». */
+function statusOf(p: Person) {
+	const s = STATUS[p.status];
+	return { label: s ? t(s.key) : t('invitaciones.sinEstado'), tone: s?.tone ?? 'neutral' };
+}
+
+/** Hay algo que mostrar sólo si hay organizador o al menos un asistente. */
+const hasInvites = computed(
+	() => !!detail.value && (!!detail.value.organizer || detail.value.attendees.length > 0)
+);
+
+/** Pide el detalle del evento existente; un fallo deja el diálogo sin la sección. */
+async function loadDetail(uid: string) {
+	detail.value = null;
+	detailState.value = 'loading';
+	try {
+		const d = await getEvent(uid, '');
+		// Si mientras tanto se abrió otro evento, esta respuesta ya no vale.
+		if (props.event?.uid !== uid) {
+			return;
+		}
+		detail.value = d;
+		detailState.value = 'idle';
+	} catch {
+		if (props.event?.uid === uid) {
+			detailState.value = 'error';
+		}
+	}
 }
 
 /** Hoy, `AAAA-MM-DD`, para abrir el formulario cuando no hay día de foco. */
@@ -339,6 +393,34 @@ function onResolve() {
           <FormGroup :label="t('editor.descripcion')" v-slot="{ id }">
             <TextArea :id="id" v-model="form.description" :rows="3" :disabled="busy" />
           </FormGroup>
+
+          <!-- Quién organiza y quiénes van: sólo lectura. Nombre y correo son texto
+               del servidor, sin verificar (el organizador es un campo libre). -->
+          <p v-if="detailState === 'loading'" class="text-body-s text-tx-muted" role="status">
+            {{ t('invitaciones.cargando') }}
+          </p>
+          <p v-else-if="detailState === 'error'" class="text-body-s text-tx-muted" role="status">
+            {{ t('invitaciones.noSePudo') }}
+          </p>
+          <section v-else-if="hasInvites && detail" class="flex min-w-0 flex-col gap-2">
+            <h3 class="text-body-s font-semibold text-tx-muted">{{ t('invitaciones.titulo') }}</h3>
+            <p v-if="detail.organizer" class="min-w-0 truncate text-body-s">
+              {{ t('invitaciones.organiza').replace('{0}', detail.organizer.name || detail.organizer.email) }}
+            </p>
+            <ListGroup v-if="detail.attendees.length" divided role="group" :label="t('invitaciones.titulo')">
+              <ListRow
+                v-for="(a, i) in detail.attendees"
+                :key="`${a.email}-${i}`"
+                truncate
+                :title="a.name || a.email"
+                :description="a.name ? a.email : ''"
+                :meta="statusOf(a).label">
+                <template #leading>
+                  <StatusDot :tone="statusOf(a).tone" />
+                </template>
+              </ListRow>
+            </ListGroup>
+          </section>
 
           <!-- Lo que falta (validación) o lo que falló al escribir (del padre),
                anunciado para el lector de pantalla. -->
