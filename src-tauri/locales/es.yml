@@ -122,6 +122,17 @@ editor:
   faltaCalendario: Elegí un calendario.
   fechaInvalida: Revisá las fechas.
   rangoInvalido: El evento termina antes de empezar.
+# Quién organiza un evento y quiénes van: sólo se muestra.
+invitaciones:
+  titulo: Invitaciones
+  organiza: "Organiza: {0}"
+  cargando: Buscando invitaciones…
+  noSePudo: No se pudieron traer las invitaciones.
+  aceptado: Aceptó
+  rechazado: Rechazó
+  pendiente: Pendiente
+  tentativo: Tentativo
+  sinEstado: —
 # El indicador de sincronización por evento, en el mes, la agenda y las columnas.
 sincronizacion:
   pendiente: Sin sincronizar

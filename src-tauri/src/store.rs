@@ -594,6 +594,20 @@ pub fn is_valid_choice(choice: &str) -> bool {
     choice == CHOICE_KEEP_LOCAL || choice == CHOICE_TAKE_SERVER
 }
 
+/// El detalle de un evento (organizador y asistentes incluidos) como el JSON
+/// que da `GetEvent`. `event_id` es el id global; `occurrence_id` vacío pide el
+/// evento maestro. Se devuelve crudo: lo lee la ventana, que sólo lo muestra.
+pub async fn get_event(
+    store: &StoreClient,
+    event_id: &str,
+    occurrence_id: &str,
+) -> Result<String, String> {
+    store
+        .call_json("GetEvent", &(event_id, occurrence_id))
+        .await
+        .map_err(describe)
+}
+
 /// Los objetos del calendario de una cuenta que chocaron con el servidor y
 /// esperan que la persona los resuelva, por el cliente comprobado del plugin.
 pub async fn list_conflicts(
@@ -1104,6 +1118,8 @@ mod tests {
         conflicts: String,
         /// Lo que contesta `GetConflict`: la comparación, o `null`.
         conflict_detail: String,
+        /// Lo que contesta `GetEvent`.
+        event_detail: String,
         /// Las páginas que contesta `ListTasks`, por su cursor.
         task_pages: Vec<String>,
         /// Lo que contesta `PutTask`. Por omisión, un id global cualquiera.
@@ -1132,6 +1148,12 @@ mod tests {
                 return Err(zbus::fdo::Error::InvalidArgs("la fecha no sirve".into()));
             }
             Ok(self.put_reply.clone())
+        }
+
+        fn get_event(&self, event_id: String, occurrence_id: String) -> zbus::fdo::Result<String> {
+            self.calls
+                .push(format!("GetEvent {event_id} {occurrence_id:?}"));
+            Ok(self.event_detail.clone())
         }
 
         fn delete_event(
@@ -1507,6 +1529,30 @@ mod tests {
         assert_eq!(detalle.local.as_deref(), Some("BEGIN:VEVENT"));
         assert!(detalle.server.is_none());
         assert!(detalle.server_unavailable);
+    }
+
+    /// El detalle de un evento sale del almacén con el id global y la
+    /// ocurrencia vacía, y trae organizador y asistentes tal cual.
+    #[tokio::test]
+    async fn el_detalle_de_un_evento_trae_organizador_y_asistentes() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let detail = r#"{"uid":"google/42","organizer":{"name":"Ana","email":"a@x.org","status":"accepted"},
+                         "attendees":[{"name":"","email":"b@x.org","status":"needs-action"}]}"#;
+        let store = FakeStore {
+            event_detail: detail.to_string(),
+            ..Default::default()
+        };
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let json = get_event(&test_bus::client(true), "google/42", "")
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["organizer"]["name"], "Ana");
+        assert_eq!(v["attendees"][0]["status"], "needs-action");
+        assert_eq!(calls.taken(), ["GetEvent google/42 \"\"".to_string()]);
     }
 
     fn conflict_store(conflicts: &str, detail: &str) -> FakeStore {

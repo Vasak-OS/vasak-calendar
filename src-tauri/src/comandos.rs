@@ -180,6 +180,17 @@ pub async fn delete_event<R: tauri::Runtime>(
     store::delete_event(&app.store(), &account_id, &event_id, &if_match).await
 }
 
+/// El detalle de un evento (organizador y asistentes) por su id global, como el
+/// JSON del almacén. `occurrence_id` vacío pide el evento maestro.
+#[tauri::command]
+pub async fn get_event<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    event_id: String,
+    occurrence_id: String,
+) -> Result<String, String> {
+    store::get_event(&app.store(), &event_id, &occurrence_id).await
+}
+
 /// Los eventos del calendario de una cuenta que chocaron con el servidor y
 /// esperan que la persona los resuelva. Lo mínimo para la lista; la comparación
 /// va con [`get_conflict`].

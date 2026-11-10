@@ -77,7 +77,9 @@ export async function invoke(comando: string, args?: unknown) {
 	if (comando === 'plugin:i18n|get_locale') return 'es';
 	invocations.push({ command: comando, args });
 	if (failures.has(comando)) throw failures.get(comando);
-	return answers.get(comando);
+	const answer = answers.get(comando);
+	// Una función permite contestar según los argumentos, o demorar la respuesta.
+	return typeof answer === 'function' ? answer(args) : answer;
 }
 
 /** Los oyentes registrados por evento, para poder dispararlos desde una prueba. */

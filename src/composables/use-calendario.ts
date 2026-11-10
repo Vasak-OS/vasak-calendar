@@ -112,6 +112,29 @@ export interface ConflictComparison {
 	server_unavailable: boolean;
 }
 
+/** Quien organiza o asiste a un evento, como lo da `GetEvent`. Texto del servidor sin verificar. */
+export interface Person {
+	name: string;
+	email: string;
+	/** El PARTSTAT en minúscula: `accepted`, `declined`, `needs-action`, `tentative` o vacío. */
+	status: string;
+}
+
+/** Lo que se muestra del detalle de un evento: quién organiza y quiénes van. */
+export interface EventDetail {
+	organizer: Person | null;
+	attendees: Person[];
+}
+
+/**
+ * El detalle de un evento por su id global (`cuenta/número`). `occurrenceId`
+ * vacío pide el evento maestro, donde están los asistentes. Un fallo se lanza.
+ */
+export async function getEvent(eventId: string, occurrenceId = ''): Promise<EventDetail> {
+	const raw = JSON.parse(await invoke<string>('get_event', { eventId, occurrenceId }));
+	return { organizer: raw.organizer ?? null, attendees: raw.attendees ?? [] };
+}
+
 /**
  * El mes que se está mirando y lo que hay en él.
  *
