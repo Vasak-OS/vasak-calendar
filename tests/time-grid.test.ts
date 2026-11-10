@@ -8,6 +8,7 @@ import { describe, expect, setSystemTime, test } from 'bun:test';
 import { mount } from '@vue/test-utils';
 import TimeGridView from '@/components/calendar/TimeGridView.vue';
 import { eventsByDay } from '@/tools/mes';
+import { pickerToIcal } from '@/tools/ical-date';
 import { viewDays } from '@/tools/views';
 import {
 	allDayOf,
@@ -244,6 +245,43 @@ describe('mover y estirar: la cuenta', () => {
 		expect(dragRange('resize', range, 40)).toEqual({ startMin: 540, endMin: 645 });
 		expect(dragRange('resize', range, -500)).toEqual({ startMin: 540, endMin: 555 });
 		expect(dragRange('resize', range, 9000)).toEqual({ startMin: 540, endMin: 1440 });
+	});
+});
+
+describe('mover y estirar: casos que antes no se cubrían', () => {
+	test('mover conserva una duración que no es de una hora, también contra los bordes', () => {
+		const short = { startMin: 540, endMin: 580 };
+		expect(dragRange('move', short, 15)).toEqual({ startMin: 555, endMin: 595 });
+		expect(dragRange('move', short, 9000)).toEqual({ startMin: 1400, endMin: 1440 });
+		expect(dragRange('move', short, -9000)).toEqual({ startMin: 0, endMin: 40 });
+	});
+
+	test('estirar el fin respeta el mínimo desde el comienzo real y el snap hacia abajo', () => {
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, -52)).toEqual({ startMin: 600, endMin: 615 });
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, 7)).toEqual({ startMin: 600, endMin: 660 });
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, 8)).toEqual({ startMin: 600, endMin: 675 });
+	});
+
+	test('sin fin, mover no manda end y el parche tampoco', () => {
+		const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T09:00:00Z', end: undefined });
+		const values = draggedValues('move', ev, 'UTC', DAY, { startMin: 600, endMin: 615 });
+		expect(values).toEqual({ start: '2026-09-15T10:00', end: null });
+		expect(Object.keys(buildTimeChange(ev, 'UTC', values)?.patch ?? {}).sort()).toEqual(['id', 'start']);
+	});
+
+	test('en otra zona, mover y estirar dan la hora de la agenda, no la de UTC', () => {
+		const zone = 'America/Argentina/Buenos_Aires';
+		// 12:00Z son las 09:00 en Buenos Aires.
+		const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T12:00:00Z', end: '2026-09-15T13:00:00Z' });
+		expect(draggedValues('resize', ev, zone, DAY, { startMin: 540, endMin: 630 })).toEqual({
+			start: '2026-09-15T09:00',
+			end: '2026-09-15T10:30',
+		});
+		const moved = draggedValues('move', ev, zone, '2026-09-16', { startMin: 600, endMin: 660 });
+		expect(moved).toEqual({ start: '2026-09-16T10:00', end: '2026-09-16T11:00' });
+		const patch = buildTimeChange(ev, zone, moved)?.patch;
+		expect(patch?.start).toEqual(pickerToIcal('2026-09-16T10:00', zone, false));
+		expect(patch?.start).not.toEqual(pickerToIcal('2026-09-16T10:00', 'UTC', false));
 	});
 });
 
