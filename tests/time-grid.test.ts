@@ -53,6 +53,16 @@ describe('el tramo de un evento en el día', () => {
 		expect(eventRangeOn(night, '2026-09-16', 'UTC', MIN)).toEqual({ startMin: 0, endMin: 360 });
 	});
 
+	test('el tramo se mide en la zona de la agenda: un rango que en UTC cae el 16 es del 15 en Buenos Aires', () => {
+		const ba = 'America/Argentina/Buenos_Aires';
+		const late = event({ start: '2026-09-16T01:00:00Z', end: '2026-09-16T02:00:00Z' });
+		expect(eventRangeOn(late, DAY, ba, MIN)).toEqual({ startMin: 22 * 60, endMin: 23 * 60 });
+		expect(eventRangeOn(at('a', '12:00', '13:30'), DAY, ba, MIN)).toEqual({
+			startMin: 9 * 60,
+			endMin: 10 * 60 + 30,
+		});
+	});
+
 	test('el que termina a medianoche cierra el día', () => {
 		expect(eventRangeOn(at('a', '22:00', '23:00'), DAY, 'UTC', MIN)?.endMin).toBe(
 			23 * 60
@@ -70,6 +80,10 @@ describe('el tramo de un evento en el día', () => {
 		const all = event({ all_day: true });
 		expect(eventRangeOn(all, DAY, 'UTC', MIN)).toBeNull();
 		expect(allDayOf([all, at('a', '09:00', '10:00')], DAY, 'UTC')).toEqual([all]);
+		// Uno de varios días, en un día del medio, tampoco tiene hora que mostrar.
+		const long = event({ start: '2026-09-14T10:00:00Z', end: '2026-09-16T10:00:00Z' });
+		expect(allDayOf([long], DAY, 'UTC')).toEqual([long]);
+		expect(allDayOf([long], '2026-09-14', 'UTC')).toEqual([]);
 	});
 });
 
@@ -113,6 +127,33 @@ describe('el reparto de los que se pisan', () => {
 			['a', 0, 2],
 			['b', 1, 2],
 			['c', 0, 1],
+		]);
+	});
+
+	test('el que arranca justo cuando termina un grupo no hereda su ancho', () => {
+		expect(
+			place([at('a', '09:00', '10:00'), at('b', '09:00', '10:00'), at('c', '10:00', '11:00')])
+		).toEqual([
+			['a', 0, 2],
+			['b', 1, 2],
+			['c', 0, 1],
+		]);
+	});
+
+	test('el orden en que llegan no cambia el reparto', () => {
+		expect(place([at('b', '09:30', '10:30'), at('a', '09:00', '10:00')])).toEqual([
+			['a', 0, 2],
+			['b', 1, 2],
+		]);
+	});
+
+	test('tres que se pisan a la vez se reparten en tres', () => {
+		expect(
+			place([at('a', '09:00', '10:00'), at('b', '09:10', '10:00'), at('c', '09:20', '10:00')])
+		).toEqual([
+			['a', 0, 3],
+			['b', 1, 3],
+			['c', 2, 3],
 		]);
 	});
 
