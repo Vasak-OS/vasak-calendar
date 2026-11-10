@@ -133,6 +133,10 @@ invitaciones:
   pendiente: Pendiente
   tentativo: Tentativo
   sinEstado: —
+  aceptar: Aceptar
+  rechazar: Rechazar
+  tentativoAccion: Tentativo
+  tuRespuesta: Tu respuesta
 # El indicador de sincronización por evento, en el mes, la agenda y las columnas.
 sincronizacion:
   pendiente: Sin sincronizar

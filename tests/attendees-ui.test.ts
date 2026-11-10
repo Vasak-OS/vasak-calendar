@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import EventDialog from '@/components/calendar/EventDialog.vue';
+import { buildRsvp } from '@/tools/event-form';
 import type { CalendarEvent } from '@/tools/mes';
 import { invocations, olvidarTodo, setAnswer, setFailure } from './dobles';
 
@@ -29,9 +30,13 @@ const event: CalendarEvent = {
 	sync_state: 'synced',
 };
 
-async function abrir(mode: 'edit' | 'create' = 'edit') {
+async function abrir(
+	mode: 'edit' | 'create' = 'edit',
+	extra: Record<string, unknown> = {},
+	ev: CalendarEvent = event
+) {
 	vista = mount(EventDialog, {
-		props: { open: true, mode, calendars: [], zone: 'UTC', event: mode === 'edit' ? event : null },
+		props: { open: true, mode, calendars: [], zone: 'UTC', event: mode === 'edit' ? ev : null, ...extra },
 		attachTo: document.body,
 	});
 	await flushPromises();
@@ -146,5 +151,64 @@ describe('invitaciones en el diálogo del evento', () => {
 		await flushPromises();
 		expect(document.body.innerHTML).toContain('nueva@x.org');
 		expect(document.body.innerHTML).not.toContain('vieja@x.org');
+	});
+});
+
+describe('responder una invitación', () => {
+	const detalle = (my: string, soy = true) =>
+		JSON.stringify({
+			organizer: null,
+			attendees: [{ name: '', email: 'yo@x.org', status: my }],
+			am_i_attendee: soy,
+			my_response: my,
+		});
+	const botones = () =>
+		[...document.body.querySelectorAll('[role=group][aria-label="invitaciones.tuRespuesta"] button')] as HTMLButtonElement[];
+
+	test('el parche lleva sólo id y partstat', () => {
+		expect(buildRsvp(event, 'tentative')).toEqual({
+			accountId: 'google',
+			calendarId: '1',
+			patch: { id: 42, partstat: 'tentative' },
+		});
+		expect(buildRsvp({ uid: 'x', calendar: 'google/1' }, 'accepted')).toBeNull();
+	});
+
+	test('sin ser invitado o sin respond no hay botones', async () => {
+		setAnswer('get_event', detalle('accepted', false));
+		await abrir('edit', { respond: async () => null });
+		expect(botones()).toHaveLength(0);
+	});
+
+	test('sin ETag los botones no se ofrecen', async () => {
+		setAnswer('get_event', detalle('accepted'));
+		await abrir('edit', { respond: async () => null }, { ...event, etag: null });
+		expect(botones()).toHaveLength(0);
+	});
+
+	test('tocar uno manda la respuesta y relee el detalle', async () => {
+		setAnswer('get_event', detalle('needs-action'));
+		const llamadas: string[] = [];
+		await abrir('edit', {
+			respond: async (_e: CalendarEvent, p: string) => {
+				llamadas.push(p);
+				setAnswer('get_event', detalle(p));
+				return null;
+			},
+		});
+		expect(botones().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'false']);
+		botones()[1].click();
+		await flushPromises();
+		expect(llamadas).toEqual(['declined']);
+		expect(botones().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
+	});
+
+	test('si falla se avisa y el diálogo sigue', async () => {
+		setAnswer('get_event', detalle('accepted'));
+		await abrir('edit', { respond: async () => 'boom' });
+		botones()[2].click();
+		await flushPromises();
+		expect(document.body.innerHTML).toContain('boom');
+		expect(botones()).toHaveLength(3);
 	});
 });

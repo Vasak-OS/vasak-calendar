@@ -25,6 +25,7 @@ import YearView from '@/components/calendar/YearView.vue';
 import { useCalendario } from '@/composables/use-calendario';
 import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import { type AppMode, isAppMode, savedMode, saveMode } from '@/tools/app-mode';
+import { buildRsvp, type Partstat } from '@/tools/event-form';
 import type { CalendarEvent } from '@/tools/mes';
 import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
 import { buildTimeChange } from '@/tools/time-grid';
@@ -140,6 +141,13 @@ async function onSubmit(value: {
 	} finally {
 		dialogBusy.value = false;
 	}
+}
+
+/** Contesta una invitación por el mismo camino que editar; devuelve el fallo o `null`. */
+async function onRespond(event: CalendarEvent, partstat: Partstat): Promise<string | null> {
+	const built = buildRsvp(event, partstat);
+	if (!built || !event.etag) return t('editor.noSePuede');
+	return writeEvent(built.accountId, built.calendarId, built.patch, event.etag);
 }
 
 /**
@@ -580,6 +588,7 @@ onMounted(async () => {
       :default-day="focusDay"
       :error="dialogError"
       :busy="dialogBusy"
+      :respond="onRespond"
       @submit="onSubmit"
       @delete-event="onDeleteEvent"
       @resolve-conflict="openConflict" />
