@@ -19,6 +19,7 @@ import MonthAgenda from '@/components/calendar/MonthAgenda.vue';
 import MonthGrid from '@/components/calendar/MonthGrid.vue';
 import MonthNavigation from '@/components/calendar/MonthNavigation.vue';
 import TasksView from '@/components/calendar/TasksView.vue';
+import TimeGridView from '@/components/calendar/TimeGridView.vue';
 import ViewSwitcher from '@/components/calendar/ViewSwitcher.vue';
 import YearView from '@/components/calendar/YearView.vue';
 import { useCalendario } from '@/composables/use-calendario';
@@ -511,12 +512,20 @@ onMounted(async () => {
                   :events-of="eventsOf"
                   @open="openEvent" />
               </template>
-              <ColumnsView
-                v-else-if="view === 'day' || view === 'days' || view === 'week'"
-                :days="dias"
-                :zone="zona"
-                :events-of="eventsOf"
-                @open="openEvent" />
+              <template v-else-if="view === 'day' || view === 'days' || view === 'week'">
+                <TimeGridView
+                  :class="WIDE_ONLY"
+                  :days="dias"
+                  :zone="zona"
+                  :events-of="eventsOf"
+                  @open="openEvent" />
+                <ColumnsView
+                  :class="NARROW_ONLY"
+                  :days="dias"
+                  :zone="zona"
+                  :events-of="eventsOf"
+                  @open="openEvent" />
+              </template>
               <YearView
                 v-else-if="view === 'year'"
                 :year="yearNumber"

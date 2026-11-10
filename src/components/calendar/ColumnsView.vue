@@ -17,6 +17,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed } from 'vue';
+import DayColumnHeader from '@/components/calendar/DayColumnHeader.vue';
 import DayEvents from '@/components/calendar/DayEvents.vue';
 import type { CalendarEvent } from '@/tools/mes';
 import type { DayRangeProps } from '@/tools/views';
@@ -26,14 +27,9 @@ const emit = defineEmits<{ open: [event: CalendarEvent] }>();
 
 const { locale } = useI18n();
 
-// Los tres formatos llevan `timeZone`: el nombre y el número del día salen en la
-// zona de la agenda y no en la del sistema, que es la que contestaría `Date`.
-const weekdayFormat = computed(
-	() => new Intl.DateTimeFormat(locale.value, { weekday: 'short', timeZone: props.zone })
-);
-const dayNumberFormat = computed(
-	() => new Intl.DateTimeFormat(locale.value, { day: 'numeric', timeZone: props.zone })
-);
+// El formato lleva `timeZone`: el día completo del nombre accesible sale en la
+// zona de la agenda y no en la del sistema, que es la que contestaría `Date`. El
+// nombre y el número del día los pone `DayColumnHeader`.
 const fullDayFormat = computed(
 	() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'full', timeZone: props.zone })
 );
@@ -54,18 +50,7 @@ const columns = { gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))' };
           :aria-current="day.esHoy ? 'date' : undefined"
           :aria-label="fullDayFormat.format(day.fecha)">
           <div class="flex items-center gap-1">
-            <span
-              class="truncate text-label-xs text-tx-muted uppercase tracking-wide"
-              aria-hidden="true">
-              {{ weekdayFormat.format(day.fecha) }}
-            </span>
-            <!-- Hoy, con el velo de acento de lo elegido, como en la cuadrícula. -->
-            <span
-              class="flex h-6 min-w-6 items-center justify-center rounded-corner-full px-1 text-sm tabular-nums"
-              :class="day.esHoy ? 'bg-ui-selected-accent font-semibold text-tx-main' : 'text-tx-main'"
-              aria-hidden="true">
-              {{ dayNumberFormat.format(day.fecha) }}
-            </span>
+            <DayColumnHeader :fecha="day.fecha" :is-today="day.esHoy" :zone="zone" />
           </div>
           <DayEvents
             :events="eventsOf(day.clave)"
