@@ -10,24 +10,43 @@
  * eventos de todo el día van en una franja arriba, y la línea de «ahora» se
  * dibuja en la columna de hoy, también en esa zona.
  *
- * Por ahora sólo se mira y se abre con un toque: arrastrar y estirar es otra
- * entrega.
+ * Un bloque con ETag se arrastra para moverlo (también a otro día) y se estira
+ * por su borde de abajo, con pointer events (no HTML5 drag-and-drop, que no
+ * anda bien en WebKitGTK ni con el tacto). La geometría y el parche viven en
+ * `tools/time-grid.ts`; acá sólo se sigue el puntero y, al soltar, se emite
+ * `change` con el comienzo y el fin nuevos. Un toque sin pasar `DRAG_THRESHOLD_PX`
+ * sigue abriendo el evento. Los de todo el día no se arrastran todavía.
  */
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import DayColumnHeader from '@/components/calendar/DayColumnHeader.vue';
 import EventLabel from '@/components/calendar/EventLabel.vue';
 import { eventSpanOn } from '@/tools/agenda';
 import { markColor } from '@/tools/event-categories';
 import { interpolar } from '@/tools/interpolar';
 import type { CalendarEvent } from '@/tools/mes';
-import { allDayOf, MINUTES_PER_DAY, minutesOfDay, placeEvents } from '@/tools/time-grid';
+import {
+	allDayOf,
+	type DragMode,
+	draggedValues,
+	dragRange,
+	isDraggableOn,
+	MINUTES_PER_DAY,
+	type MinuteRange,
+	minutesOfDay,
+	type PlacedEvent,
+	placeEvents,
+} from '@/tools/time-grid';
 import type { DayRangeProps } from '@/tools/views';
 import { civilDe, claveCivil } from '@/tools/zona';
 
 const props = defineProps<DayRangeProps>();
-const emit = defineEmits<{ open: [event: CalendarEvent] }>();
+const emit = defineEmits<{
+	open: [event: CalendarEvent];
+	/** Un evento movido o estirado: valores de comienzo y fin como los del formulario. */
+	change: [value: { event: CalendarEvent; start: string; end: string | null }];
+}>();
 
 const { t, locale } = useI18n();
 
@@ -37,6 +56,8 @@ const PX_PER_MINUTE = 1;
 const MIN_BLOCK_PX = 32;
 /** A qué hora arranca el scroll: lo que se mira casi siempre es la jornada. */
 const FIRST_VISIBLE_HOUR = 8;
+/** Cuánto hay que mover el puntero para que un toque pase a ser un arrastre. */
+const DRAG_THRESHOLD_PX = 4;
 
 const hours = Array.from({ length: 24 }, (_, hour) => hour);
 const bodyHeight = { height: `${MINUTES_PER_DAY * PX_PER_MINUTE}px` };
@@ -59,8 +80,8 @@ const fullDayFormat = computed(
 	() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'full', timeZone: props.zone })
 );
 
-function axisLabel(hour: number): string {
-	return axisFormat.value.format(new Date(Date.UTC(2000, 0, 1, hour)));
+function axisLabel(minutes: number): string {
+	return axisFormat.value.format(new Date(Date.UTC(2000, 0, 1, 0, minutes)));
 }
 
 const columns = computed(() => ({
@@ -116,6 +137,91 @@ function blockStyle(p: { startMin: number; endMin: number; column: number; colum
 		width: `${100 / p.columns}%`,
 	};
 }
+
+/** El arrastre en curso: qué bloque, en qué modo y a dónde va la vista previa. */
+interface Drag {
+	p: PlacedEvent;
+	dayKey: string;
+	mode: DragMode;
+	x: number;
+	y: number;
+	moved: boolean;
+	/** La columna y el tramo donde cae ahora. */
+	target: { dayKey: string; range: MinuteRange };
+}
+const drag = shallowRef<Drag | null>(null);
+const columnsEl = ref<HTMLElement | null>(null);
+// El click que sigue a un arrastre no tiene que abrir el evento.
+let suppressClick = false;
+
+const draggable = (p: PlacedEvent, dayKey: string) => isDraggableOn(p.event, dayKey, props.zone);
+
+function startDrag(e: PointerEvent, p: PlacedEvent, dayKey: string, mode: DragMode) {
+	if (e.button !== 0 || !draggable(p, dayKey)) return;
+	(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	drag.value = {
+		p,
+		dayKey,
+		mode,
+		x: e.clientX,
+		y: e.clientY,
+		moved: false,
+		target: { dayKey, range: p },
+	};
+}
+
+/** La columna bajo el puntero, para mover de día. */
+function dayUnder(clientX: number, fallback: string): string {
+	const box = columnsEl.value?.getBoundingClientRect();
+	if (!box || box.width === 0) return fallback;
+	const index = Math.floor(((clientX - box.left) / box.width) * props.days.length);
+	return props.days[Math.min(Math.max(index, 0), props.days.length - 1)].clave;
+}
+
+function moveDrag(e: PointerEvent) {
+	const d = drag.value;
+	if (!d) return;
+	const dy = e.clientY - d.y;
+	const moved = d.moved || Math.hypot(e.clientX - d.x, dy) >= DRAG_THRESHOLD_PX;
+	if (!moved) return;
+	drag.value = {
+		...d,
+		moved,
+		target: {
+			dayKey: d.mode === 'move' ? dayUnder(e.clientX, d.dayKey) : d.dayKey,
+			range: dragRange(d.mode, d.p, dy / PX_PER_MINUTE),
+		},
+	};
+}
+
+function endDrag(commit: boolean) {
+	const d = drag.value;
+	drag.value = null;
+	if (!d?.moved) return;
+	suppressClick = true;
+	setTimeout(() => {
+		suppressClick = false;
+	}, 0);
+	const { dayKey, range } = d.target;
+	if (
+		!commit ||
+		(dayKey === d.dayKey && range.startMin === d.p.startMin && range.endMin === d.p.endMin)
+	) {
+		return;
+	}
+	emit('change', {
+		event: d.p.event,
+		...draggedValues(d.mode, d.p.event, props.zone, dayKey, range),
+	});
+}
+
+function onBlockClick(event: CalendarEvent) {
+	if (!suppressClick) emit('open', event);
+}
+
+/** La vista previa: el tramo nuevo, sólo en la columna donde cae. */
+const ghostOn = (dayKey: string) =>
+	drag.value?.moved && drag.value.target.dayKey === dayKey ? drag.value : null;
 
 // «Ahora», en la zona de la agenda. Se refresca cada minuto.
 const now = ref(new Date());
@@ -212,7 +318,7 @@ const gutter = { scrollbarGutter: 'stable' };
               :key="hour"
               class="-translate-y-1/2 absolute right-1 text-label-xs text-tx-muted tabular-nums"
               :style="{ top: `${hour * 60 * PX_PER_MINUTE}px` }">
-              {{ axisLabel(hour) }}
+              {{ axisLabel(hour * 60) }}
             </span>
           </div>
           <div class="relative min-w-0 flex-1">
@@ -223,7 +329,7 @@ const gutter = { scrollbarGutter: 'stable' };
                 class="absolute inset-x-0 border-ui-line-weak border-t"
                 :style="{ top: `${hour * 60 * PX_PER_MINUTE}px` }"></div>
             </div>
-            <div class="grid h-full" :style="columns">
+            <div ref="columnsEl" class="grid h-full" :style="columns">
               <div
                 v-for="{ day, placed } in columnsData"
                 :key="day.clave"
@@ -236,11 +342,19 @@ const gutter = { scrollbarGutter: 'stable' };
                   :key="`${p.event.uid}-${p.event.start}`"
                   type="button"
                   class="absolute flex min-w-0 flex-col overflow-hidden rounded-corner-xs border border-ui-line bg-ui-surface px-1 text-left text-xs"
+                  :class="[
+                    draggable(p, day.clave) ? 'cursor-move touch-none' : 'cursor-not-allowed',
+                    drag?.moved && drag.p === p ? 'opacity-40' : '',
+                  ]"
                   :style="blockStyle(p)"
                   :title="descriptionOf(p.event, day.clave)"
                   :aria-label="descriptionOf(p.event, day.clave)"
                   data-testid="time-block"
-                  @click="emit('open', p.event)">
+                  @pointerdown="startDrag($event, p, day.clave, 'move')"
+                  @pointermove="moveDrag"
+                  @pointerup="endDrag(true)"
+                  @pointercancel="endDrag(false)"
+                  @click="onBlockClick(p.event)">
                   <!-- El color del calendario es dato del servidor: va como marca
                        al costado, nunca de fondo. Sin color, el acento. -->
                   <span
@@ -254,7 +368,24 @@ const gutter = { scrollbarGutter: 'stable' };
                   <span class="truncate pl-1 text-tx-muted tabular-nums" aria-hidden="true">
                     {{ timeOf(p.event, day.clave) }}
                   </span>
+                  <!-- La manija del borde de abajo: estira el fin. -->
+                  <span
+                    v-if="draggable(p, day.clave)"
+                    class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize"
+                    aria-hidden="true"
+                    data-testid="resize-handle"
+                    @pointerdown.stop="startDrag($event, p, day.clave, 'resize')"></span>
                 </button>
+                <!-- La vista previa del arrastre, con el mismo paso que se va a guardar. -->
+                <div
+                  v-if="ghostOn(day.clave)"
+                  class="pointer-events-none absolute z-10 overflow-hidden rounded-corner-xs border border-primary bg-primary/30 px-1 text-xs tabular-nums"
+                  :style="blockStyle({ ...ghostOn(day.clave)!.target.range, column: 0, columns: 1 })"
+                  aria-hidden="true"
+                  data-testid="drag-ghost">
+                  {{ axisLabel(ghostOn(day.clave)!.target.range.startMin) }}
+                  – {{ axisLabel(ghostOn(day.clave)!.target.range.endMin % MINUTES_PER_DAY) }}
+                </div>
                 <!-- La línea de «ahora», sólo en la columna de hoy. -->
                 <div
                   v-if="day.clave === todayKey"

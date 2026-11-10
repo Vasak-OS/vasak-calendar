@@ -8,8 +8,18 @@ import { describe, expect, setSystemTime, test } from 'bun:test';
 import { mount } from '@vue/test-utils';
 import TimeGridView from '@/components/calendar/TimeGridView.vue';
 import { eventsByDay } from '@/tools/mes';
+import { pickerToIcal } from '@/tools/ical-date';
 import { viewDays } from '@/tools/views';
-import { allDayOf, eventRangeOn, minutesOfDay, placeEvents } from '@/tools/time-grid';
+import {
+	allDayOf,
+	buildTimeChange,
+	dragRange,
+	draggedValues,
+	eventRangeOn,
+	isDraggableOn,
+	minutesOfDay,
+	placeEvents,
+} from '@/tools/time-grid';
 import { calendarEvent as event } from './fixtures/events';
 
 const DAY = '2026-09-15';
@@ -215,5 +225,154 @@ describe('la vista de grilla', () => {
 		} finally {
 			setSystemTime();
 		}
+	});
+});
+
+describe('mover y estirar: la cuenta', () => {
+	const range = { startMin: 540, endMin: 600 };
+
+	test('mover corre el comienzo con snap a 15 min y conserva la duración', () => {
+		expect(dragRange('move', range, 22)).toEqual({ startMin: 555, endMin: 615 });
+		expect(dragRange('move', range, 6)).toEqual({ startMin: 540, endMin: 600 });
+	});
+
+	test('mover no se sale del día', () => {
+		expect(dragRange('move', range, -900)).toEqual({ startMin: 0, endMin: 60 });
+		expect(dragRange('move', range, 9000)).toEqual({ startMin: 1380, endMin: 1440 });
+	});
+
+	test('estirar corre el fin con snap, con duración mínima y tope en las 24:00', () => {
+		expect(dragRange('resize', range, 40)).toEqual({ startMin: 540, endMin: 645 });
+		expect(dragRange('resize', range, -500)).toEqual({ startMin: 540, endMin: 555 });
+		expect(dragRange('resize', range, 9000)).toEqual({ startMin: 540, endMin: 1440 });
+	});
+});
+
+describe('mover y estirar: casos que antes no se cubrían', () => {
+	test('mover conserva una duración que no es de una hora, también contra los bordes', () => {
+		const short = { startMin: 540, endMin: 580 };
+		expect(dragRange('move', short, 15)).toEqual({ startMin: 555, endMin: 595 });
+		expect(dragRange('move', short, 9000)).toEqual({ startMin: 1400, endMin: 1440 });
+		expect(dragRange('move', short, -9000)).toEqual({ startMin: 0, endMin: 40 });
+	});
+
+	test('estirar el fin respeta el mínimo desde el comienzo real y el snap hacia abajo', () => {
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, -52)).toEqual({ startMin: 600, endMin: 615 });
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, 7)).toEqual({ startMin: 600, endMin: 660 });
+		expect(dragRange('resize', { startMin: 600, endMin: 660 }, 8)).toEqual({ startMin: 600, endMin: 675 });
+	});
+
+	test('sin fin, mover no manda end y el parche tampoco', () => {
+		const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T09:00:00Z', end: undefined });
+		const values = draggedValues('move', ev, 'UTC', DAY, { startMin: 600, endMin: 615 });
+		expect(values).toEqual({ start: '2026-09-15T10:00', end: null });
+		expect(Object.keys(buildTimeChange(ev, 'UTC', values)?.patch ?? {}).sort()).toEqual(['id', 'start']);
+	});
+
+	test('en otra zona, mover y estirar dan la hora de la agenda, no la de UTC', () => {
+		const zone = 'America/Argentina/Buenos_Aires';
+		// 12:00Z son las 09:00 en Buenos Aires.
+		const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T12:00:00Z', end: '2026-09-15T13:00:00Z' });
+		expect(draggedValues('resize', ev, zone, DAY, { startMin: 540, endMin: 630 })).toEqual({
+			start: '2026-09-15T09:00',
+			end: '2026-09-15T10:30',
+		});
+		const moved = draggedValues('move', ev, zone, '2026-09-16', { startMin: 600, endMin: 660 });
+		expect(moved).toEqual({ start: '2026-09-16T10:00', end: '2026-09-16T11:00' });
+		const patch = buildTimeChange(ev, zone, moved)?.patch;
+		expect(patch?.start).toEqual(pickerToIcal('2026-09-16T10:00', zone, false));
+		expect(patch?.start).not.toEqual(pickerToIcal('2026-09-16T10:00', 'UTC', false));
+	});
+});
+
+describe('mover y estirar: el parche', () => {
+	const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T09:00:00Z', end: '2026-09-15T09:40:00Z' });
+
+	test('el parche lleva sólo id, start y end, y la cuenta y el calendario salen de los ids', () => {
+		const values = draggedValues('move', ev, 'UTC', DAY, { startMin: 600, endMin: 640 });
+		expect(values).toEqual({ start: '2026-09-15T10:00', end: '2026-09-15T10:40' });
+		const built = buildTimeChange(ev, 'UTC', values);
+		expect(built?.accountId).toBe('acc');
+		expect(built?.calendarId).toBe('3');
+		expect(Object.keys(built?.patch ?? {}).sort()).toEqual(['end', 'id', 'start']);
+		expect(built?.patch.id).toBe(7);
+	});
+
+	test('mover conserva la duración real y pasa de día; estirar deja el comienzo', () => {
+		expect(draggedValues('move', ev, 'UTC', '2026-09-17', { startMin: 600, endMin: 620 })).toEqual({
+			start: '2026-09-17T10:00',
+			end: '2026-09-17T10:40',
+		});
+		expect(draggedValues('resize', ev, 'UTC', DAY, { startMin: 540, endMin: 1440 })).toEqual({
+			start: '2026-09-15T09:00',
+			end: '2026-09-16T00:00',
+		});
+	});
+
+	test('un id que no se puede escribir no arma parche', () => {
+		expect(buildTimeChange(event({ uid: 'uno' }), 'UTC', { start: '2026-09-15T10:00', end: null })).toBeNull();
+	});
+
+	test('sin ETag, de todo el día o recortado por el día, no se arrastra', () => {
+		expect(isDraggableOn(ev, DAY, 'UTC')).toBe(true);
+		expect(isDraggableOn({ ...ev, etag: null }, DAY, 'UTC')).toBe(false);
+		expect(isDraggableOn({ ...ev, all_day: true }, DAY, 'UTC')).toBe(false);
+		expect(isDraggableOn({ ...ev, end: '2026-09-16T06:00:00Z' }, DAY, 'UTC')).toBe(false);
+	});
+});
+
+describe('mover y estirar: la interacción', () => {
+	const days = viewDays('days', new Date('2026-09-15T12:00:00Z'), 'UTC', new Date('2026-09-15T12:00:00Z'));
+	const ev = event({ uid: 'acc/7', calendar: 'acc/3', etag: '"e1"', start: '2026-09-15T09:00:00Z', end: '2026-09-15T10:00:00Z' });
+	const mountGrid = (e: typeof ev) => {
+		const byDay = eventsByDay([e], days, 'UTC');
+		return mount(TimeGridView, { props: { days, zone: 'UTC', eventsOf: (k: string) => byDay.get(k) ?? [] } });
+	};
+	const ptr = (clientY: number) => ({ button: 0, pointerId: 1, clientX: 10, clientY });
+	Element.prototype.setPointerCapture ??= () => {};
+
+	test('arrastrar el cuerpo lo mueve con snap y no abre el evento', async () => {
+		const wrapper = mountGrid(ev);
+		const block = wrapper.get('[data-testid="time-block"]');
+		await block.trigger('pointerdown', ptr(100));
+		await block.trigger('pointermove', ptr(130));
+		expect(wrapper.find('[data-testid="drag-ghost"]').exists()).toBe(true);
+		await block.trigger('pointerup', ptr(130));
+		await block.trigger('click');
+		expect(wrapper.emitted('change')?.[0]).toEqual([{ event: ev, start: '2026-09-15T09:30', end: '2026-09-15T10:30' }]);
+		expect(wrapper.emitted('open')).toBeUndefined();
+		wrapper.unmount();
+	});
+
+	test('la manija estira el fin', async () => {
+		const wrapper = mountGrid(ev);
+		await wrapper.get('[data-testid="resize-handle"]').trigger('pointerdown', ptr(100));
+		await wrapper.get('[data-testid="time-block"]').trigger('pointermove', ptr(145));
+		await wrapper.get('[data-testid="time-block"]').trigger('pointerup', ptr(145));
+		expect(wrapper.emitted('change')?.[0]).toEqual([{ event: ev, start: '2026-09-15T09:00', end: '2026-09-15T10:45' }]);
+		wrapper.unmount();
+	});
+
+	test('un toque sin pasar el umbral abre el evento y no cambia nada', async () => {
+		const wrapper = mountGrid(ev);
+		const block = wrapper.get('[data-testid="time-block"]');
+		await block.trigger('pointerdown', ptr(100));
+		await block.trigger('pointermove', ptr(102));
+		await block.trigger('pointerup', ptr(102));
+		await block.trigger('click');
+		expect(wrapper.emitted('change')).toBeUndefined();
+		expect(wrapper.emitted('open')).toHaveLength(1);
+		wrapper.unmount();
+	});
+
+	test('sin ETag no hay manija ni arrastre', async () => {
+		const wrapper = mountGrid({ ...ev, etag: null });
+		const block = wrapper.get('[data-testid="time-block"]');
+		expect(wrapper.find('[data-testid="resize-handle"]').exists()).toBe(false);
+		await block.trigger('pointerdown', ptr(100));
+		await block.trigger('pointermove', ptr(160));
+		await block.trigger('pointerup', ptr(160));
+		expect(wrapper.emitted('change')).toBeUndefined();
+		wrapper.unmount();
 	});
 });

@@ -12,6 +12,8 @@
  */
 
 import { eventSpanOn } from '@/tools/agenda';
+import { splitGlobalId } from '@/tools/event-form';
+import { isoToDateTimePicker, pickerToIcal } from '@/tools/ical-date';
 import type { CalendarEvent } from '@/tools/mes';
 import { civilDe } from '@/tools/zona';
 
@@ -120,4 +122,103 @@ export function placeEvents(
 /** Los eventos de un día que van en la franja de arriba (todo el día). */
 export function allDayOf(events: CalendarEvent[], dayKey: string, zone: string): CalendarEvent[] {
 	return events.filter((event) => eventSpanOn(event, dayKey, zone).kind === 'all-day');
+}
+
+/** El paso del arrastre: lo que se mueve o se estira cae en múltiplos de 15 min. */
+export const SNAP_MINUTES = 15;
+/** Lo mínimo que puede durar un evento al estirarlo. */
+export const MIN_DURATION_MINUTES = 15;
+
+export type DragMode = 'move' | 'resize';
+export interface MinuteRange {
+	startMin: number;
+	endMin: number;
+}
+
+const snap = (minutes: number) => Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
+const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
+
+/**
+ * El tramo resultante de arrastrar `deltaMin` minutos. Mover corre el comienzo
+ * (con snap) y conserva la duración, sin salirse del día; estirar corre el fin
+ * (con snap), con duración mínima y sin pasar de las 24:00.
+ */
+export function dragRange(mode: DragMode, range: MinuteRange, deltaMin: number): MinuteRange {
+	if (mode === 'resize') {
+		const endMin = clamp(
+			snap(range.endMin + deltaMin),
+			range.startMin + MIN_DURATION_MINUTES,
+			MINUTES_PER_DAY
+		);
+		return { startMin: range.startMin, endMin };
+	}
+	const length = range.endMin - range.startMin;
+	const startMin = clamp(snap(range.startMin + deltaMin), 0, MINUTES_PER_DAY - length);
+	return { startMin, endMin: startMin + length };
+}
+
+/**
+ * Si el evento se puede mover o estirar en esa columna: tiene ETag (sin él la
+ * edición está en pausa), ids que se pueden escribir y es un tramo entero de ese
+ * día. Los de todo el día y los que siguen o vienen de otro día quedan fuera.
+ */
+export function isDraggableOn(event: CalendarEvent, dayKey: string, zone: string): boolean {
+	const kind = eventSpanOn(event, dayKey, zone).kind;
+	return (
+		!!event.etag &&
+		!event.all_day &&
+		(kind === 'range' || kind === 'at') &&
+		splitGlobalId(event.uid) !== null &&
+		splitGlobalId(event.calendar) !== null
+	);
+}
+
+/** `AAAA-MM-DDTHH:MM` del minuto `minutes` (puede ser 1440) de un día civil. */
+function dayAt(dayKey: string, minutes: number): string {
+	return new Date(Date.parse(`${dayKey}T00:00:00Z`) + minutes * 60_000).toISOString().slice(0, 16);
+}
+
+/**
+ * Los valores de comienzo y fin (como los del formulario) de un evento ya
+ * movido o estirado a `range` en `dayKey`. Mover conserva la duración real del
+ * evento (no la del bloque agrandado); estirar deja el comienzo como estaba.
+ * El fin es `null` si el evento no tenía.
+ */
+export function draggedValues(
+	mode: DragMode,
+	event: CalendarEvent,
+	zone: string,
+	dayKey: string,
+	range: MinuteRange
+): { start: string; end: string | null } {
+	if (mode === 'resize') {
+		return { start: isoToDateTimePicker(event.start, zone), end: dayAt(dayKey, range.endMin) };
+	}
+	const real = event.end ? (Date.parse(event.end) - Date.parse(event.start)) / 60_000 : null;
+	return {
+		start: dayAt(dayKey, range.startMin),
+		end: real === null ? null : dayAt(dayKey, range.startMin + real),
+	};
+}
+
+/**
+ * El parche **conservador** de un cambio de hora: sólo `{ id, start, end }`, lo
+ * demás no se toca (ver `store::put_event`). La cuenta y el calendario salen
+ * como en `buildEdit`. `null` si algo no se puede escribir.
+ */
+export function buildTimeChange(
+	event: CalendarEvent,
+	zone: string,
+	values: { start: string; end: string | null }
+): { accountId: string; calendarId: string; patch: Record<string, unknown> } | null {
+	const calendar = splitGlobalId(event.calendar);
+	const id = Number(splitGlobalId(event.uid)?.localId);
+	const start = pickerToIcal(values.start, zone, false);
+	const end = values.end === null ? null : pickerToIcal(values.end, zone, false);
+	if (!calendar || !Number.isInteger(id) || id <= 0 || !start || (values.end !== null && !end)) {
+		return null;
+	}
+	const patch: Record<string, unknown> = { id, start };
+	if (end) patch.end = end;
+	return { accountId: calendar.accountId, calendarId: calendar.localId, patch };
 }

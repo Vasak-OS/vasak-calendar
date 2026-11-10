@@ -27,6 +27,7 @@ import WindowAppLayout from '@/layouts/WindowAppLayout.vue';
 import { type AppMode, isAppMode, savedMode, saveMode } from '@/tools/app-mode';
 import type { CalendarEvent } from '@/tools/mes';
 import { NARROW_ONLY, type Pane, paneClass, WIDE_ONLY } from '@/tools/narrow-layout';
+import { buildTimeChange } from '@/tools/time-grid';
 import { periodTitle } from '@/tools/views';
 import { civilDe } from '@/tools/zona';
 
@@ -139,6 +140,21 @@ async function onSubmit(value: {
 	} finally {
 		dialogBusy.value = false;
 	}
+}
+
+/**
+ * Un evento movido o estirado en la grilla: se comitea por el mismo camino que
+ * el formulario (`writeEvent` con el ETag como `ifMatch`) con un parche que lleva
+ * sólo `{ id, start, end }`. El 412 lo maneja el almacén (diálogo de conflicto).
+ */
+async function onTimeChange(value: { event: CalendarEvent; start: string; end: string | null }) {
+	const built = buildTimeChange(value.event, zona.value, value);
+	if (!built || !value.event.etag) return;
+	const fallo = await writeEvent(built.accountId, built.calendarId, built.patch, value.event.etag);
+	// Al soltar no hay diálogo donde mostrar el error como en `onSubmit`; el bloque
+	// vuelve a su lugar solo, pero sin aviso el arrastre fallaría en silencio. Se
+	// muestra en los mismos avisos que un fallo de lectura, hasta la próxima carga.
+	if (fallo) avisos.value = [...avisos.value, fallo];
 }
 
 /**
@@ -518,7 +534,8 @@ onMounted(async () => {
                   :days="dias"
                   :zone="zona"
                   :events-of="eventsOf"
-                  @open="openEvent" />
+                  @open="openEvent"
+                  @change="onTimeChange" />
                 <ColumnsView
                   :class="NARROW_ONLY"
                   :days="dias"
