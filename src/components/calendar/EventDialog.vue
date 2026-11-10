@@ -214,7 +214,7 @@ const STATUS: Record<string, { key: string; tone: 'success' | 'error' | 'warning
 
 /** El estado del PARTSTAT como texto traducido y tono; vacío o desconocido es «—». */
 function statusOf(p: Person) {
-	const s = STATUS[p.status];
+	const s = STATUS[p.status.toLowerCase()];
 	return { label: s ? t(s.key) : t('invitaciones.sinEstado'), tone: s?.tone ?? 'neutral' };
 }
 

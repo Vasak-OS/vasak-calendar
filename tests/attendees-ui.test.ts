@@ -80,4 +80,71 @@ describe('invitaciones en el diálogo del evento', () => {
 		await abrir('create');
 		expect(invocations.some((i) => i.command === 'get_event')).toBe(false);
 	});
+
+	test('cada estado se muestra con su texto y lo desconocido o vacío es «—»', async () => {
+		const estados = ['accepted', 'declined', 'needs-action', 'tentative', '', 'raro'];
+		setAnswer(
+			'get_event',
+			JSON.stringify({
+				organizer: null,
+				attendees: estados.map((status, i) => ({ name: '', email: `p${i}@x.org`, status })),
+			})
+		);
+		await abrir();
+		const metas = [...document.body.querySelectorAll('section [role=group] > *')].map((li) => li.textContent ?? '');
+		const esperado = [
+			'invitaciones.aceptado',
+			'invitaciones.rechazado',
+			'invitaciones.pendiente',
+			'invitaciones.tentativo',
+			'invitaciones.sinEstado',
+			'invitaciones.sinEstado',
+		];
+		expect(metas).toHaveLength(6);
+		esperado.forEach((clave, i) => {
+			expect(metas[i]).toContain(clave);
+		});
+	});
+
+	test('el estado en mayúsculas se entiende igual', async () => {
+		setAnswer(
+			'get_event',
+			JSON.stringify({ organizer: null, attendees: [{ name: '', email: 'a@x.org', status: 'NEEDS-ACTION' }] })
+		);
+		await abrir();
+		expect(document.body.innerHTML).toContain('invitaciones.pendiente');
+	});
+
+	test('con sólo organizador la sección aparece, y con sólo asistentes también', async () => {
+		setAnswer('get_event', JSON.stringify({ organizer: { name: 'Ana', email: 'a@x.org', status: '' }, attendees: [] }));
+		await abrir();
+		expect(document.body.innerHTML).toContain('invitaciones.titulo');
+		vista?.unmount();
+		setAnswer('get_event', JSON.stringify({ organizer: null, attendees: [{ name: '', email: 'b@x.org', status: '' }] }));
+		await abrir();
+		expect(document.body.innerHTML).toContain('b@x.org');
+	});
+
+	test('si se abre otro evento, la respuesta tardía del anterior no se pinta', async () => {
+		const pendientes: Record<string, (v: string) => void> = {};
+		setAnswer(
+			'get_event',
+			(args: { eventId: string }) => new Promise<string>((ok) => {
+				pendientes[args.eventId] = ok;
+			})
+		);
+		await abrir();
+		await vista?.setProps({ event: { ...event, uid: 'google/43' } });
+		await flushPromises();
+		pendientes['google/43'](
+			JSON.stringify({ organizer: null, attendees: [{ name: '', email: 'nueva@x.org', status: '' }] })
+		);
+		await flushPromises();
+		pendientes['google/42'](
+			JSON.stringify({ organizer: null, attendees: [{ name: '', email: 'vieja@x.org', status: '' }] })
+		);
+		await flushPromises();
+		expect(document.body.innerHTML).toContain('nueva@x.org');
+		expect(document.body.innerHTML).not.toContain('vieja@x.org');
+	});
 });
