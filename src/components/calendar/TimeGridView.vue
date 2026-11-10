@@ -152,6 +152,7 @@ const gutter = { scrollbarGutter: 'stable' };
             <div
               v-for="{ day, allDay } in columnsData"
               :key="day.clave"
+              role="group"
               class="flex min-w-0 flex-col gap-1 border-ui-line-weak border-l p-1"
               :data-day="day.clave"
               :aria-current="day.clave === todayKey ? 'date' : undefined"
@@ -217,8 +218,10 @@ const gutter = { scrollbarGutter: 'stable' };
               <div
                 v-for="{ day, placed } in columnsData"
                 :key="day.clave"
+                role="group"
                 class="relative min-w-0 border-ui-line-weak border-l"
-                :data-day-column="day.clave">
+                :data-day-column="day.clave"
+                :aria-label="fullDayFormat.format(day.fecha)">
                 <button
                   v-for="p in placed"
                   :key="`${p.event.uid}-${p.event.start}`"
