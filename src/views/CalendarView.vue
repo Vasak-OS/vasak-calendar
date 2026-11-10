@@ -150,7 +150,11 @@ async function onSubmit(value: {
 async function onTimeChange(value: { event: CalendarEvent; start: string; end: string | null }) {
 	const built = buildTimeChange(value.event, zona.value, value);
 	if (!built || !value.event.etag) return;
-	await writeEvent(built.accountId, built.calendarId, built.patch, value.event.etag);
+	const fallo = await writeEvent(built.accountId, built.calendarId, built.patch, value.event.etag);
+	// Al soltar no hay diálogo donde mostrar el error como en `onSubmit`; el bloque
+	// vuelve a su lugar solo, pero sin aviso el arrastre fallaría en silencio. Se
+	// muestra en los mismos avisos que un fallo de lectura, hasta la próxima carga.
+	if (fallo) avisos.value = [...avisos.value, fallo];
 }
 
 /**
