@@ -16,6 +16,7 @@
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { Panel } from '@vasakgroup/vue-libvasak';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import DayColumnHeader from '@/components/calendar/DayColumnHeader.vue';
 import EventLabel from '@/components/calendar/EventLabel.vue';
 import { eventSpanOn } from '@/tools/agenda';
 import { markColor } from '@/tools/event-categories';
@@ -53,12 +54,6 @@ const timeFormat = computed(
 const axisFormat = computed(
 	() =>
 		new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
-);
-const weekdayFormat = computed(
-	() => new Intl.DateTimeFormat(locale.value, { weekday: 'short', timeZone: props.zone })
-);
-const dayNumberFormat = computed(
-	() => new Intl.DateTimeFormat(locale.value, { day: 'numeric', timeZone: props.zone })
 );
 const fullDayFormat = computed(
 	() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'full', timeZone: props.zone })
@@ -129,13 +124,38 @@ const nowTop = computed(() => `${minutesOfDay(now.value, props.zone) * PX_PER_MI
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const scroller = ref<HTMLElement | null>(null);
+let desplazada = false;
+let observer: ResizeObserver | null = null;
+
+/**
+ * Lleva el scroll a la primera hora visible, una sola vez y sólo cuando la
+ * grilla ya tiene alto. Con `WIDE_ONLY` la grilla puede estar oculta al montar
+ * (`display:none`, alto 0), y `scrollTop` sobre algo sin alto no hace nada; en
+ * WebKitGTK ni `resize` ni `matchMedia` avisan de que se volvió visible, así que
+ * lo escucha un `ResizeObserver` sobre el propio desplazador.
+ */
+function desplazarAlInicio(): void {
+	const el = scroller.value;
+	if (!el || desplazada || el.clientHeight === 0) return;
+	el.scrollTop = FIRST_VISIBLE_HOUR * 60 * PX_PER_MINUTE;
+	desplazada = true;
+	observer?.disconnect();
+}
+
 onMounted(() => {
-	if (scroller.value) scroller.value.scrollTop = FIRST_VISIBLE_HOUR * 60 * PX_PER_MINUTE;
+	desplazarAlInicio();
+	if (scroller.value && !desplazada) {
+		observer = new ResizeObserver(() => desplazarAlInicio());
+		observer.observe(scroller.value);
+	}
 	timer = setInterval(() => {
 		now.value = new Date();
 	}, 60_000);
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+	clearInterval(timer);
+	observer?.disconnect();
+});
 
 // El scroll se reserva siempre: así la cabecera y el cuerpo miden lo mismo.
 const gutter = { scrollbarGutter: 'stable' };
@@ -158,21 +178,10 @@ const gutter = { scrollbarGutter: 'stable' };
               :aria-current="day.clave === todayKey ? 'date' : undefined"
               :aria-label="fullDayFormat.format(day.fecha)">
               <div class="flex items-center justify-center gap-1">
-                <span
-                  class="truncate text-label-xs text-tx-muted uppercase tracking-wide"
-                  aria-hidden="true">
-                  {{ weekdayFormat.format(day.fecha) }}
-                </span>
-                <span
-                  class="flex h-6 min-w-6 items-center justify-center rounded-corner-full px-1 text-sm tabular-nums"
-                  :class="
-                    day.clave === todayKey
-                      ? 'bg-ui-selected-accent font-semibold text-tx-main'
-                      : 'text-tx-main'
-                  "
-                  aria-hidden="true">
-                  {{ dayNumberFormat.format(day.fecha) }}
-                </span>
+                <DayColumnHeader
+                  :fecha="day.fecha"
+                  :is-today="day.clave === todayKey"
+                  :zone="zone" />
               </div>
               <button
                 v-for="event in allDay"
