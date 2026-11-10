@@ -55,6 +55,7 @@ pub fn run() {
             comandos::delete_task,
             comandos::list_conflicts,
             comandos::get_conflict,
+            comandos::get_event,
             comandos::resolve_conflict,
             store_access::request_calendar_access_again,
             reloj::zona_del_sistema,
