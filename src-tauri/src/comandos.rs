@@ -180,6 +180,21 @@ pub async fn delete_event<R: tauri::Runtime>(
     store::delete_event(&app.store(), &account_id, &event_id, &if_match).await
 }
 
+/// Fija el color de un calendario del almacén del sistema.
+///
+/// `calendar_id` es el número local del calendario; `color` es `#RRGGBB` o
+/// `#RRGGBBAA` (el almacén lo valida). Actualiza el color local y encola el
+/// cambio hacia el servidor; la ventana relee con el aviso del área.
+#[tauri::command]
+pub async fn set_calendar_color<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    account_id: String,
+    calendar_id: String,
+    color: String,
+) -> Result<(), String> {
+    store::set_calendar_color(&app.store(), &account_id, &calendar_id, &color).await
+}
+
 /// El detalle de un evento (organizador y asistentes) por su id global, como el
 /// JSON del almacén. `occurrence_id` vacío pide el evento maestro.
 #[tauri::command]

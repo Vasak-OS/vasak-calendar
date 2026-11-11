@@ -328,6 +328,25 @@ pub async fn delete_event(
     Ok(())
 }
 
+/// Fija el color de un calendario, por el cliente comprobado del plugin.
+///
+/// `color` es `#RRGGBB` o `#RRGGBBAA`; el almacén lo valida y lo rechaza si no.
+/// Actualiza el color local en el acto y encola el cambio hacia el servidor
+/// (`PROPPATCH` de `calendar-color`); la señal `Changed` del área sale sola, y con
+/// ella la ventana relee los calendarios con el color nuevo.
+pub async fn set_calendar_color(
+    store: &StoreClient,
+    account_id: &str,
+    calendar_id: &str,
+    color: &str,
+) -> Result<(), String> {
+    store
+        .call_json("SetCalendarColor", &(account_id, calendar_id, color))
+        .await
+        .map_err(describe)?;
+    Ok(())
+}
+
 // ── Las tareas: listar, crear, editar y borrar ─────────────────────────────
 
 /// Una tarea (`VTODO`) tal como la lista `ListTasks` del almacén.

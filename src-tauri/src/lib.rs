@@ -50,6 +50,7 @@ pub fn run() {
             comandos::store_events,
             comandos::put_event,
             comandos::delete_event,
+            comandos::set_calendar_color,
             comandos::store_tasks,
             comandos::put_task,
             comandos::delete_task,

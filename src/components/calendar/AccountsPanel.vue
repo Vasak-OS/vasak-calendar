@@ -42,6 +42,8 @@ const emit = defineEmits<{
 	chooseZone: [zone: string];
 	/** Ocultar o volver a mostrar un calendario, por su URL. */
 	toggleCalendar: [url: string];
+	/** Fijar el color de un calendario (`#RRGGBB`), por su URL. */
+	setColor: [url: string, color: string];
 	/** Ocultar o volver a mostrar una categoría, por su nombre. */
 	toggleCategory: [name: string];
 	/** Volver al mes, con la ventana angosta. */
@@ -151,11 +153,24 @@ function textOf(line: SyncLine): string {
                  esquema: va como `color` del punto, que lo pone por `style`
                  (la excepción de la guardia). Sin color, el acento. El nombre
                  va siempre: dos calendarios del mismo color son comunes, y la
-                 marca sola no dice cuál es cuál. Marcada = se ve. -->
-            <StatusDot
-              size="md"
-              tone="accent"
-              :color="calendar.color ?? undefined" />
+                 marca sola no dice cuál es cuál. Marcada = se ve.
+
+                 La marca es además el disparador para cambiar el color: un
+                 `<input type="color">` nativo superpuesto y transparente la cubre,
+                 así un clic abre el selector del sistema. El valor arranca en el
+                 color actual; al soltar uno nuevo se encola (ver `setCalendarColor`). -->
+            <label class="relative inline-flex shrink-0 cursor-pointer" :title="t('cuentas.cambiarColor')">
+              <StatusDot
+                size="md"
+                tone="accent"
+                :color="calendar.color ?? undefined" />
+              <input
+                type="color"
+                class="absolute inset-0 cursor-pointer opacity-0"
+                :value="calendar.color ?? ''"
+                :aria-label="interpolar(t('cuentas.cambiarColorDe'), calendar.nombre)"
+                @change="emit('setColor', calendar.url, ($event.target as HTMLInputElement).value)" />
+            </label>
             <Checkbox
               class="min-w-0"
               :label="calendar.nombre"
