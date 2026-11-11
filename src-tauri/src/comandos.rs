@@ -439,4 +439,98 @@ mod tests {
         // calendario» no le dice a nadie cuál de los suyos le falta.
         assert!(json["fallos"][0].as_str().unwrap().starts_with("Trabajo:"));
     }
+
+    /// Un almacén de mentira que sólo atiende `SetCalendarColor` y anota qué le
+    /// llegó.
+    struct ColorStore {
+        calls: crate::test_bus::Calls,
+        fail: bool,
+    }
+
+    #[zbus::interface(name = "ar.net.vasak.os.AccountsStore")]
+    impl ColorStore {
+        fn set_calendar_color(
+            &self,
+            account_id: String,
+            calendar_id: String,
+            color: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls.push(format!(
+                "SetCalendarColor {account_id} {calendar_id} {color}"
+            ));
+            if self.fail {
+                return Err(zbus::fdo::Error::InvalidArgs("el color no sirve".into()));
+            }
+            Ok("{}".to_string())
+        }
+    }
+
+    /// Una aplicación de prueba con el cliente del almacén ya registrado, sin
+    /// arrancar el plugin entero (que se engancha al bus real).
+    fn app_con_almacen() -> tauri::App<tauri::test::MockRuntime> {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        app.manage(std::sync::Arc::new(crate::test_bus::client(true)));
+        app
+    }
+
+    /// El comando reenvía al almacén la cuenta, el calendario y el color tal cual
+    /// los mandó la ventana.
+    #[tokio::test]
+    async fn el_comando_de_color_reenvia_al_almacen() {
+        let _turno = crate::test_bus::exclusive();
+        let bus = crate::test_bus::PrivateBus::start();
+        let calls = crate::test_bus::Calls::default();
+        let _servicio = bus
+            .serve(
+                tauri_plugin_vsk_store::client::PATH,
+                ColorStore {
+                    calls: calls.clone(),
+                    fail: false,
+                },
+            )
+            .await;
+        let app = app_con_almacen();
+
+        set_calendar_color(
+            app.handle().clone(),
+            "google".into(),
+            "7".into(),
+            "#FF8800".into(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            ["SetCalendarColor google 7 #FF8800".to_string()]
+        );
+    }
+
+    /// Si el almacén rechaza el color, el motivo llega a la ventana como texto.
+    #[tokio::test]
+    async fn el_comando_de_color_propaga_el_rechazo_del_almacen() {
+        let _turno = crate::test_bus::exclusive();
+        let bus = crate::test_bus::PrivateBus::start();
+        let _servicio = bus
+            .serve(
+                tauri_plugin_vsk_store::client::PATH,
+                ColorStore {
+                    calls: Default::default(),
+                    fail: true,
+                },
+            )
+            .await;
+        let app = app_con_almacen();
+
+        let error = set_calendar_color(
+            app.handle().clone(),
+            "google".into(),
+            "7".into(),
+            "rojo".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.is_empty(), "el error no puede ser vacío");
+    }
 }
