@@ -159,7 +159,15 @@ function textOf(line: SyncLine): string {
                  `<input type="color">` nativo superpuesto y transparente la cubre,
                  así un clic abre el selector del sistema. El valor arranca en el
                  color actual; al soltar uno nuevo se encola (ver `setCalendarColor`). -->
-            <label class="relative inline-flex shrink-0 cursor-pointer" :title="t('cuentas.cambiarColor')">
+            <!-- El `<input>` va transparente (`opacity-0`), así que su anillo de
+                 foco nativo no se ve: el foco de teclado lo muestra la etiqueta con
+                 `focus-within` y el token `--ui-focus` (el mismo anillo del resto,
+                 WCAG 2.4.7). El valor que recibe el selector recorta el alfa de un
+                 color de 8 dígitos (`#RRGGBBAA`): WebKitGTK no lo acepta y abriría
+                 el selector en negro; el color guardado no se toca. -->
+            <label
+              class="relative inline-flex shrink-0 cursor-pointer rounded-full focus-within:[outline:2px_solid_var(--ui-focus)] focus-within:[outline-offset:2px]"
+              :title="t('cuentas.cambiarColor')">
               <StatusDot
                 size="md"
                 tone="accent"
@@ -167,7 +175,7 @@ function textOf(line: SyncLine): string {
               <input
                 type="color"
                 class="absolute inset-0 cursor-pointer opacity-0"
-                :value="calendar.color ?? ''"
+                :value="calendar.color?.replace(/^(#[0-9a-f]{6})[0-9a-f]{2}$/i, '$1') ?? ''"
                 :aria-label="interpolar(t('cuentas.cambiarColorDe'), calendar.nombre)"
                 @change="emit('setColor', calendar.url, ($event.target as HTMLInputElement).value)" />
             </label>
