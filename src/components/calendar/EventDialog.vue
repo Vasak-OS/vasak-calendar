@@ -101,6 +101,7 @@ const form = reactive<EventFormState>({
 	end: '',
 	location: '',
 	description: '',
+	categories: '',
 });
 
 /** Lo que falta, como clave de i18n. Se limpia al tocar cualquier cosa. */
@@ -181,14 +182,16 @@ function fillBlank() {
 	form.end = `${day}T10:00`;
 	form.location = '';
 	form.description = '';
+	form.categories = '';
 }
 
 /**
- * Carga lo que se sabe del evento. El título, las fechas y todo-el-día salen de
- * la vez que se está mirando; la ubicación y la descripción no viajan con la
- * ocurrencia (harían falta de `GetEvent`), así que quedan en blanco. Por eso la
- * edición es conservadora: un campo en blanco no se manda, y el que la persona
- * no tocó no se pisa (ver `buildEdit`/`store::put_event`).
+ * Carga lo que se sabe del evento. El título, las fechas, todo-el-día y las
+ * categorías salen de la vez que se está mirando (las categorías sí viajan con la
+ * ocurrencia); la ubicación y la descripción no viajan con la ocurrencia (harían
+ * falta de `GetEvent`), así que quedan en blanco. Por eso la edición es
+ * conservadora: un campo en blanco no se manda, y el que la persona no tocó no se
+ * pisa (ver `buildEdit`/`store::put_event`).
  */
 function fillFrom(event: CalendarEvent) {
 	form.summary = event.title;
@@ -203,6 +206,7 @@ function fillFrom(event: CalendarEvent) {
 	}
 	form.location = '';
 	form.description = '';
+	form.categories = (event.categories ?? []).join(', ');
 }
 
 /** Invitaciones del evento abierto: se piden aparte y sólo se muestran. */
@@ -431,6 +435,14 @@ function onResolve() {
 
           <FormGroup :label="t('editor.descripcion')" v-slot="{ id }">
             <TextArea :id="id" v-model="form.description" :rows="3" :disabled="busy" />
+          </FormGroup>
+
+          <FormGroup :label="t('editor.categorias')" v-slot="{ id }">
+            <TextInput
+              :id="id"
+              v-model="form.categories"
+              :placeholder="t('editor.categoriasPlaceholder')"
+              :disabled="busy" />
           </FormGroup>
 
           <!-- Quién organiza y quiénes van: sólo lectura. Nombre y correo son texto

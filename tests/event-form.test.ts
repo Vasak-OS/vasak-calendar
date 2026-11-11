@@ -3,6 +3,7 @@ import {
 	buildCreate,
 	buildEdit,
 	type EventFormState,
+	parseCategories,
 	splitGlobalId,
 } from '../src/tools/event-form';
 
@@ -17,6 +18,7 @@ function form(overrides: Partial<EventFormState> = {}): EventFormState {
 		end: '2026-09-15T10:00',
 		location: '',
 		description: '',
+		categories: '',
 		...overrides,
 	};
 }
@@ -39,6 +41,31 @@ describe('splitGlobalId', () => {
 	});
 });
 
+describe('parseCategories', () => {
+	test('parte por coma y recorta cada categoría', () => {
+		expect(parseCategories('Trabajo,  Casa ')).toEqual(['Trabajo', 'Casa']);
+	});
+
+	test('descarta las vacías y las de sólo espacios', () => {
+		expect(parseCategories('a, ,b , ')).toEqual(['a', 'b']);
+	});
+
+	test('texto vacío es una lista vacía', () => {
+		expect(parseCategories('')).toEqual([]);
+		expect(parseCategories('  ,  ')).toEqual([]);
+	});
+
+	test('una sola categoría es una lista de uno', () => {
+		expect(parseCategories('x')).toEqual(['x']);
+	});
+
+	test('un nombre con espacios internos se conserva como un solo elemento', () => {
+		// El diálogo carga las categorías con join(', '): ida y vuelta sin romperlas.
+		const cargado = ['Sin categoría', 'Trabajo'].join(', ');
+		expect(parseCategories(cargado)).toEqual(['Sin categoría', 'Trabajo']);
+	});
+});
+
 describe('buildCreate', () => {
 	test('arma el parche con título, comienzo y fin, sin id', () => {
 		const result = buildCreate(form(), MADRID);
@@ -52,6 +79,7 @@ describe('buildCreate', () => {
 			summary: 'Reunión',
 			start: { value: '20260915T090000', params: ['TZID=Europe/Madrid'] },
 			end: { value: '20260915T100000', params: ['TZID=Europe/Madrid'] },
+			categories: [],
 		});
 		// Crear no lleva id.
 		expect('id' in result.patch).toBe(false);
@@ -121,6 +149,33 @@ describe('buildCreate', () => {
 			MADRID
 		);
 		expect(result.ok).toBe(true);
+	});
+});
+
+describe('categorías en el parche', () => {
+	test('crear manda las categorías escritas como lista', () => {
+		const result = buildCreate(form({ categories: 'Trabajo, Casa' }), MADRID);
+		expect(result.ok && result.patch.categories).toEqual(['Trabajo', 'Casa']);
+	});
+
+	test('crear con categorías vacías manda una lista vacía', () => {
+		const result = buildCreate(form({ categories: '' }), MADRID);
+		expect(result.ok && result.patch.categories).toEqual([]);
+	});
+
+	test('editar manda las categorías y el id', () => {
+		const result = buildEdit(form({ categories: 'Trabajo' }), MADRID, 'google/42');
+		expect(result.ok).toBe(true);
+		if (!result.ok) {
+			return;
+		}
+		expect(result.patch.categories).toEqual(['Trabajo']);
+		expect(result.patch.id).toBe(42);
+	});
+
+	test('editar con el campo vacío manda una lista vacía: así se borran', () => {
+		const result = buildEdit(form({ categories: '' }), MADRID, 'google/42');
+		expect(result.ok && result.patch.categories).toEqual([]);
 	});
 });
 
