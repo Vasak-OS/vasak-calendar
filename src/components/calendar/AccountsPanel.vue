@@ -166,7 +166,7 @@ function textOf(line: SyncLine): string {
                  color de 8 dígitos (`#RRGGBBAA`): WebKitGTK no lo acepta y abriría
                  el selector en negro; el color guardado no se toca. -->
             <label
-              class="relative inline-flex shrink-0 cursor-pointer rounded-full focus-within:[outline:2px_solid_var(--ui-focus)] focus-within:[outline-offset:2px]"
+              class="relative inline-flex shrink-0 cursor-pointer rounded-corner-full focus-within:[outline:2px_solid_var(--ui-focus)] focus-within:[outline-offset:2px]"
               :title="t('cuentas.cambiarColor')">
               <StatusDot
                 size="md"
