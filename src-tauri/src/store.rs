@@ -328,6 +328,25 @@ pub async fn delete_event(
     Ok(())
 }
 
+/// Fija el color de un calendario, por el cliente comprobado del plugin.
+///
+/// `color` es `#RRGGBB` o `#RRGGBBAA`; el almacén lo valida y lo rechaza si no.
+/// Actualiza el color local en el acto y encola el cambio hacia el servidor
+/// (`PROPPATCH` de `calendar-color`); la señal `Changed` del área sale sola, y con
+/// ella la ventana relee los calendarios con el color nuevo.
+pub async fn set_calendar_color(
+    store: &StoreClient,
+    account_id: &str,
+    calendar_id: &str,
+    color: &str,
+) -> Result<(), String> {
+    store
+        .call_json("SetCalendarColor", &(account_id, calendar_id, color))
+        .await
+        .map_err(describe)?;
+    Ok(())
+}
+
 // ── Las tareas: listar, crear, editar y borrar ─────────────────────────────
 
 /// Una tarea (`VTODO`) tal como la lista `ListTasks` del almacén.
@@ -1170,6 +1189,21 @@ mod tests {
             Ok("{}".to_string())
         }
 
+        fn set_calendar_color(
+            &self,
+            account_id: String,
+            calendar_id: String,
+            color: String,
+        ) -> zbus::fdo::Result<String> {
+            self.calls.push(format!(
+                "SetCalendarColor {account_id} {calendar_id} {color}"
+            ));
+            if self.fail_write {
+                return Err(zbus::fdo::Error::AccessDenied("sin permiso".into()));
+            }
+            Ok("{}".to_string())
+        }
+
         fn list_conflicts(&self, account_id: String, area: String) -> zbus::fdo::Result<String> {
             self.calls
                 .push(format!("ListConflicts {account_id} {area}"));
@@ -1440,6 +1474,41 @@ mod tests {
             .unwrap();
 
         assert_eq!(calls.taken(), [r#"DeleteEvent google 42 """#.to_string()]);
+    }
+
+    /// Fijar el color va al sincronizador comprobado con la cuenta, el calendario
+    /// y el color, en ese orden.
+    #[tokio::test]
+    async fn fijar_el_color_llega_al_sincronizador() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", false);
+        let calls = store.calls.clone();
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        set_calendar_color(&test_bus::client(true), "google", "7", "#FF8800")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            calls.taken(),
+            ["SetCalendarColor google 7 #FF8800".to_string()]
+        );
+    }
+
+    /// Un «no» de la persona al fijar el color se vuelve la marca de «sin
+    /// permiso», como en las demás escrituras.
+    #[tokio::test]
+    async fn un_no_al_fijar_el_color_se_vuelve_la_marca() {
+        let _turno = test_bus::exclusive();
+        let bus = PrivateBus::start();
+        let store = write_store("", true);
+        let _servicio = bus.serve(tauri_plugin_vsk_store::client::PATH, store).await;
+
+        let error = set_calendar_color(&test_bus::client(true), "google", "7", "#FF8800")
+            .await
+            .unwrap_err();
+        assert_eq!(error, STORE_PERMISSION_DENIED);
     }
 
     /// Un `PutEvent` que falla —una fecha que no es iCalendar— no entra en

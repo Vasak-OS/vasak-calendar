@@ -494,6 +494,34 @@ export function useCalendario() {
 	}
 
 	/**
+	 * Fija el color de un calendario, por su id global `cuenta/número`. Lo parte y
+	 * encola el cambio; el almacén actualiza el color local en el acto y avisa, con
+	 * lo que `cargar()` relee los calendarios con el color nuevo. `color` es
+	 * `#RRGGBB` o `#RRGGBBAA` (el almacén lo valida). Devuelve el fallo, o `null`.
+	 */
+	async function setCalendarColor(url: string, color: string): Promise<string | null> {
+		const parts = splitGlobalId(url);
+		if (!parts) {
+			return 'cuentas.noSePuede';
+		}
+		try {
+			await invoke('set_calendar_color', {
+				accountId: parts.accountId,
+				calendarId: parts.localId,
+				color,
+			});
+			await cargar();
+			return null;
+		} catch (e) {
+			if (isStorePermissionDenied(e)) {
+				sinPermiso.value = true;
+			}
+			console.error('no se pudo fijar el color del calendario', e);
+			return String(e);
+		}
+	}
+
+	/**
 	 * Borra un evento —la serie entera—, de forma optimista: se saca ya de la
 	 * vista y el borrado se encola hacia el servidor. No se relee en el acto: el
 	 * almacén deja la fila marcada hasta que el servidor confirma, y una
@@ -785,6 +813,7 @@ export function useCalendario() {
 		refresh,
 		focusDay,
 		writeEvent,
+		setCalendarColor,
 		deleteEvent,
 		getConflict,
 		resolveConflict,

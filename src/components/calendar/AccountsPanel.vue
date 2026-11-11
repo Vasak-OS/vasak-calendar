@@ -42,6 +42,8 @@ const emit = defineEmits<{
 	chooseZone: [zone: string];
 	/** Ocultar o volver a mostrar un calendario, por su URL. */
 	toggleCalendar: [url: string];
+	/** Fijar el color de un calendario (`#RRGGBB`), por su URL. */
+	setColor: [url: string, color: string];
 	/** Ocultar o volver a mostrar una categoría, por su nombre. */
 	toggleCategory: [name: string];
 	/** Volver al mes, con la ventana angosta. */
@@ -151,11 +153,32 @@ function textOf(line: SyncLine): string {
                  esquema: va como `color` del punto, que lo pone por `style`
                  (la excepción de la guardia). Sin color, el acento. El nombre
                  va siempre: dos calendarios del mismo color son comunes, y la
-                 marca sola no dice cuál es cuál. Marcada = se ve. -->
-            <StatusDot
-              size="md"
-              tone="accent"
-              :color="calendar.color ?? undefined" />
+                 marca sola no dice cuál es cuál. Marcada = se ve.
+
+                 La marca es además el disparador para cambiar el color: un
+                 `<input type="color">` nativo superpuesto y transparente la cubre,
+                 así un clic abre el selector del sistema. El valor arranca en el
+                 color actual; al soltar uno nuevo se encola (ver `setCalendarColor`). -->
+            <!-- El `<input>` va transparente (`opacity-0`), así que su anillo de
+                 foco nativo no se ve: el foco de teclado lo muestra la etiqueta con
+                 `focus-within` y el token `--ui-focus` (el mismo anillo del resto,
+                 WCAG 2.4.7). El valor que recibe el selector recorta el alfa de un
+                 color de 8 dígitos (`#RRGGBBAA`): WebKitGTK no lo acepta y abriría
+                 el selector en negro; el color guardado no se toca. -->
+            <label
+              class="relative inline-flex shrink-0 cursor-pointer rounded-corner-full focus-within:[outline:2px_solid_var(--ui-focus)] focus-within:[outline-offset:2px]"
+              :title="t('cuentas.cambiarColor')">
+              <StatusDot
+                size="md"
+                tone="accent"
+                :color="calendar.color ?? undefined" />
+              <input
+                type="color"
+                class="absolute inset-0 cursor-pointer opacity-0"
+                :value="calendar.color?.replace(/^(#[0-9a-f]{6})[0-9a-f]{2}$/i, '$1') ?? ''"
+                :aria-label="interpolar(t('cuentas.cambiarColorDe'), calendar.nombre)"
+                @change="emit('setColor', calendar.url, ($event.target as HTMLInputElement).value)" />
+            </label>
             <Checkbox
               class="min-w-0"
               :label="calendar.nombre"

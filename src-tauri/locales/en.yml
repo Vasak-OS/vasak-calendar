@@ -31,6 +31,9 @@ cuentas:
   titulo: Accounts
   calendarios: Calendars
   categorias: Categories
+  cambiarColor: Change the color
+  cambiarColorDe: "Change the color of {0}"
+  noSePuede: The calendar could not be identified.
   sinCuentasTitulo: No calendars yet
   sinCuentasDescripcion: Connect an account from Settings and its calendars will show up here.
   necesitaReconectarse: It needs to be connected again from Settings

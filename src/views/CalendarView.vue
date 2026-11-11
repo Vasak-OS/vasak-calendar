@@ -59,6 +59,7 @@ const {
 	refresh,
 	focusDay,
 	writeEvent,
+	setCalendarColor,
 	deleteEvent,
 	getConflict,
 	resolveConflict,
@@ -163,6 +164,18 @@ async function onTimeChange(value: { event: CalendarEvent; start: string; end: s
 	// vuelve a su lugar solo, pero sin aviso el arrastre fallaría en silencio. Se
 	// muestra en los mismos avisos que un fallo de lectura, hasta la próxima carga.
 	if (fallo) avisos.value = [...avisos.value, fallo];
+}
+
+/**
+ * Cambiar el color de un calendario desde el panel. Se encola; el color local
+ * cambia en el acto. Un fallo —un color que el almacén rechaza, o sin permiso—
+ * se muestra en los avisos, como el de un arrastre que no se pudo guardar.
+ */
+async function onSetColor(url: string, color: string) {
+	const fallo = await setCalendarColor(url, color);
+	if (fallo) {
+		avisos.value = [...avisos.value, fallo === 'cuentas.noSePuede' ? t(fallo) : fallo];
+	}
 }
 
 /**
@@ -465,6 +478,7 @@ onMounted(async () => {
       :foreign-zone="zonaAjena"
       @choose-zone="elegirZona"
       @toggle-calendar="toggleCalendarVisibility"
+      @set-color="onSetColor"
       @toggle-category="toggleCategoryVisibility"
       @forward="go('month')" />
 

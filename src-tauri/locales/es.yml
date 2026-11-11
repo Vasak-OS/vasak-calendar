@@ -43,6 +43,9 @@ cuentas:
   titulo: Cuentas
   calendarios: Calendarios
   categorias: Categorías
+  cambiarColor: Cambiar el color
+  cambiarColorDe: "Cambiar el color de {0}"
+  noSePuede: No se pudo identificar el calendario.
   sinCuentasTitulo: Todavía no hay ningún calendario
   sinCuentasDescripcion: Conectá una cuenta desde Configuración y sus calendarios aparecen acá.
   necesitaReconectarse: Hay que volver a conectarla desde Configuración
