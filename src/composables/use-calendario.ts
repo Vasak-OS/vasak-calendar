@@ -124,6 +124,10 @@ export interface Person {
 export interface EventDetail {
 	organizer: Person | null;
 	attendees: Person[];
+	/** Si la cuenta es una de las invitadas (se puede contestar). */
+	amIAttendee: boolean;
+	/** Mi PARTSTAT en minúscula, o vacío. */
+	myResponse: string;
 }
 
 /**
@@ -132,7 +136,12 @@ export interface EventDetail {
  */
 export async function getEvent(eventId: string, occurrenceId = ''): Promise<EventDetail> {
 	const raw = JSON.parse(await invoke<string>('get_event', { eventId, occurrenceId }));
-	return { organizer: raw.organizer ?? null, attendees: raw.attendees ?? [] };
+	return {
+		organizer: raw.organizer ?? null,
+		attendees: raw.attendees ?? [],
+		amIAttendee: raw.am_i_attendee === true,
+		myResponse: typeof raw.my_response === 'string' ? raw.my_response : '',
+	};
 }
 
 /**

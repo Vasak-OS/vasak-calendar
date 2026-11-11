@@ -118,6 +118,10 @@ invitaciones:
   pendiente: Pending
   tentativo: Tentative
   sinEstado: —
+  aceptar: Accept
+  rechazar: Decline
+  tentativoAccion: Tentative
+  tuRespuesta: Your response
 # The per-event sync indicator, in the month, agenda and columns views.
 sincronizacion:
   pendiente: Not synced

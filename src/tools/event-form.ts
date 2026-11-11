@@ -46,6 +46,24 @@ export function splitGlobalId(global: string): GlobalParts | null {
 	return { accountId: global.slice(0, cut), localId: global.slice(cut + 1) };
 }
 
+export type Partstat = 'accepted' | 'declined' | 'tentative';
+
+/**
+ * Parche conservador para contestar una invitación: sólo `{ id, partstat }`, que
+ * el sync traduce a fijar mi PARTSTAT. `null` si el evento no tiene id local válido.
+ */
+export function buildRsvp(
+	event: { uid: string; calendar: string },
+	partstat: Partstat
+): { accountId: string; calendarId: string; patch: { id: number; partstat: Partstat } } | null {
+	const calendar = splitGlobalId(event.calendar);
+	const id = Number(splitGlobalId(event.uid)?.localId);
+	if (!calendar || !Number.isInteger(id) || id <= 0) {
+		return null;
+	}
+	return { accountId: calendar.accountId, calendarId: calendar.localId, patch: { id, partstat } };
+}
+
 /** El parche armado y a dónde mandarlo, o la clave del aviso de lo que falta. */
 export type BuildResult =
 	| {

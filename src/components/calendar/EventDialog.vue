@@ -44,7 +44,7 @@ import {
 	getEvent,
 	type Person,
 } from '@/composables/use-calendario';
-import { buildCreate, buildEdit, type EventFormState } from '@/tools/event-form';
+import { buildCreate, buildEdit, type EventFormState, type Partstat } from '@/tools/event-form';
 import { isoToDatePicker, isoToDateTimePicker } from '@/tools/ical-date';
 import { type CalendarEvent, canEditEvent, isConflict } from '@/tools/mes';
 
@@ -64,8 +64,10 @@ const props = withDefaults(
 		error?: string;
 		/** Mientras la escritura está en curso: desactiva los botones. */
 		busy?: boolean;
+		/** Contesta la invitación; devuelve el mensaje del fallo o `null`. Sin él no hay botones. */
+		respond?: (event: CalendarEvent, partstat: Partstat) => Promise<string | null>;
 	}>(),
-	{ event: null, defaultDay: '', error: '', busy: false }
+	{ event: null, defaultDay: '', error: '', busy: false, respond: undefined }
 );
 
 const emit = defineEmits<{
@@ -216,6 +218,43 @@ const STATUS: Record<string, { key: string; tone: 'success' | 'error' | 'warning
 function statusOf(p: Person) {
 	const s = STATUS[p.status.toLowerCase()];
 	return { label: s ? t(s.key) : t('invitaciones.sinEstado'), tone: s?.tone ?? 'neutral' };
+}
+
+const RSVP: { value: Partstat; key: string }[] = [
+	{ value: 'accepted', key: 'invitaciones.aceptar' },
+	{ value: 'declined', key: 'invitaciones.rechazar' },
+	{ value: 'tentative', key: 'invitaciones.tentativoAccion' },
+];
+const rsvpBusy = ref(false);
+const rsvpError = ref('');
+
+/** Se puede contestar si soy invitado y el evento ya tiene ETag (no está en pausa). */
+const canRespond = computed(
+	() =>
+		!!props.respond &&
+		!!detail.value?.amIAttendee &&
+		canEditEvent(props.event) &&
+		!eventInConflict.value
+);
+
+/** Manda mi respuesta y relee el detalle para reflejar el estado confirmado. */
+async function onRespond(partstat: Partstat) {
+	const event = props.event;
+	if (!event || !props.respond || rsvpBusy.value) return;
+	rsvpBusy.value = true;
+	rsvpError.value = '';
+	try {
+		const fallo = await props.respond(event, partstat);
+		if (fallo) {
+			rsvpError.value = fallo;
+			return;
+		}
+		detail.value = await getEvent(event.uid, '');
+	} catch {
+		rsvpError.value = t('invitaciones.noSePudo');
+	} finally {
+		rsvpBusy.value = false;
+	}
 }
 
 /** Hay algo que mostrar sólo si hay organizador o al menos un asistente. */
@@ -420,6 +459,18 @@ function onResolve() {
                 </template>
               </ListRow>
             </ListGroup>
+            <div v-if="canRespond && detail" class="flex min-w-0 flex-wrap items-center gap-2" role="group" :aria-label="t('invitaciones.tuRespuesta')">
+              <span class="text-body-s text-tx-muted">{{ t('invitaciones.tuRespuesta') }}</span>
+              <ActionButton
+                v-for="r in RSVP"
+                :key="r.value"
+                variant="secondary"
+                :pressed="detail.myResponse === r.value"
+                :label="t(r.key)"
+                :disabled="rsvpBusy"
+                @click="onRespond(r.value)" />
+            </div>
+            <p v-if="rsvpError" class="text-body-s text-tx-muted" role="status">{{ rsvpError }}</p>
           </section>
 
           <!-- Lo que falta (validación) o lo que falló al escribir (del padre),
