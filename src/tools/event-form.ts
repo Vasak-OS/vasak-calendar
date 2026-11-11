@@ -23,6 +23,19 @@ export interface EventFormState {
 	end: string;
 	location: string;
 	description: string;
+	/** Las categorías, separadas por coma tal como las escribe la persona. */
+	categories: string;
+}
+
+/**
+ * Las categorías del campo de texto como lista: se parten por coma, se recorta
+ * cada una y se descartan las vacías. «Trabajo, , Casa» → `["Trabajo", "Casa"]`.
+ */
+export function parseCategories(text: string): string[] {
+	return text
+		.split(',')
+		.map((name) => name.trim())
+		.filter(Boolean);
 }
 
 /** Un id global partido en la cuenta y el número local del objeto. */
@@ -113,6 +126,10 @@ function buildPatch(
 	if (description) {
 		patch.description = description;
 	}
+	// Las categorías viajan con la ocurrencia (a diferencia de ubicación y
+	// descripción), así que el formulario las carga y las manda siempre: una lista
+	// vacía las saca al editar, y al crear no deja ninguna línea (es un no-op).
+	patch.categories = parseCategories(state.categories);
 	return { ok: true, patch };
 }
 

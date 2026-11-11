@@ -95,6 +95,8 @@ editor:
   ubicacion: Location
   ubicacionPlaceholder: Where it is
   descripcion: Description
+  categorias: Categories
+  categoriasPlaceholder: Comma-separated
   guardar: Save
   cancelar: Cancel
   borrar: Delete

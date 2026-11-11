@@ -110,6 +110,8 @@ editor:
   ubicacion: Ubicación
   ubicacionPlaceholder: Dónde es
   descripcion: Descripción
+  categorias: Categorías
+  categoriasPlaceholder: Separadas por coma
   guardar: Guardar
   cancelar: Cancelar
   borrar: Borrar
