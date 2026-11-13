@@ -128,6 +128,13 @@ export interface EventDetail {
 	amIAttendee: boolean;
 	/** Mi PARTSTAT en minúscula, o vacío. */
 	myResponse: string;
+	/**
+	 * El enlace de la videollamada del evento (`CONFERENCE`, o una URL de un
+	 * dominio conocido en `LOCATION`/`URL`/`DESCRIPTION`), o vacío si no hay. El
+	 * programa ya lo reconoció y validó —sólo `http`/`https`—; la ventana lo abre
+	 * con el navegador al tocar «Unirse», nunca solo.
+	 */
+	meetingUrl: string;
 }
 
 /**
@@ -141,6 +148,7 @@ export async function getEvent(eventId: string, occurrenceId = ''): Promise<Even
 		attendees: raw.attendees ?? [],
 		amIAttendee: raw.am_i_attendee === true,
 		myResponse: typeof raw.my_response === 'string' ? raw.my_response : '',
+		meetingUrl: typeof raw.meeting_url === 'string' ? raw.meeting_url : '',
 	};
 }
 

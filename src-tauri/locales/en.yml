@@ -127,6 +127,10 @@ invitaciones:
   rechazar: Decline
   tentativoAccion: Tentative
   tuRespuesta: Your response
+# The event's video-call link and the button to open it.
+videollamada:
+  unirse: Join the video call
+  noSePudoAbrir: Could not open the link.
 # The per-event sync indicator, in the month, agenda and columns views.
 sincronizacion:
   pendiente: Not synced
