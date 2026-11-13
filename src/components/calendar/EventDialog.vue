@@ -18,6 +18,7 @@
  * resuelve con «mantener la mía / tomar la del servidor», que esta ventana ofrece
  * con un aviso no destructivo (el botón abre la vista comparativa).
  */
+import { open as openExternally } from '@tauri-apps/plugin-shell';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
@@ -266,6 +267,23 @@ const hasInvites = computed(
 	() => !!detail.value && (!!detail.value.organizer || detail.value.attendees.length > 0)
 );
 
+/** El enlace de la videollamada del evento, ya reconocido y validado por el
+ * programa (sólo `http`/`https`). Vacío si el evento no trae ninguno. */
+const meetingUrl = computed(() => detail.value?.meetingUrl ?? '');
+const joinError = ref('');
+
+/** Abre el enlace con el navegador. No abre nada solo: lo puso quien creó el
+ * evento, y se abre sólo cuando la persona toca «Unirse». */
+async function onJoin() {
+	if (!meetingUrl.value) return;
+	joinError.value = '';
+	try {
+		await openExternally(meetingUrl.value);
+	} catch {
+		joinError.value = t('videollamada.noSePudoAbrir');
+	}
+}
+
 /** Pide el detalle del evento existente; un fallo deja el diálogo sin la sección. */
 async function loadDetail(uid: string) {
 	detail.value = null;
@@ -444,6 +462,16 @@ function onResolve() {
               :placeholder="t('editor.categoriasPlaceholder')"
               :disabled="busy" />
           </FormGroup>
+
+          <!-- Unirse a la videollamada del evento. El enlace ya lo reconoció y
+               validó el programa (sólo http/https); se abre con el navegador al
+               tocar, nunca solo, porque lo puso quien creó el evento. -->
+          <ActionButton
+            v-if="meetingUrl"
+            variant="primary"
+            :label="t('videollamada.unirse')"
+            @click="onJoin" />
+          <p v-if="joinError" class="text-body-s text-tx-muted" role="status">{{ joinError }}</p>
 
           <!-- Quién organiza y quiénes van: sólo lectura. Nombre y correo son texto
                del servidor, sin verificar (el organizador es un campo libre). -->
